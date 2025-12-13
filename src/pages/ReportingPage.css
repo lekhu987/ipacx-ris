@@ -1,0 +1,140 @@
+
+.summary-cards {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.summary-cards .card {
+  background: #f5f5f5;
+  padding: 15px;
+  border-radius: 8px;
+  flex: 1;
+  text-align: center;
+  font-weight: bold;
+}
+
+.filters {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.filters input,
+.filters select {
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+/* Add this to your ReportingPage.css */
+
+/* --- Card Styles --- */
+.report-summary-cards {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 30px;
+}
+
+.report-summary-cards .card {
+  flex: 1;
+  padding: 3px;
+  border-radius: 6px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.report-summary-cards .card:hover {
+  transform: translateY(-2px);
+}
+
+.report-summary-cards .card h3 {
+  margin-top: 0;
+  font-size: 1em;
+  color: #555;
+}
+
+.report-summary-cards .card .count {
+  font-size: 2em;
+  font-weight: bold;
+  margin: 0;
+}
+
+/* Color schemes for the cards */
+.total-card { background-color: #e3f2fd; border-left: 5px solid #2196f3; }
+.draft-card { background-color: #fff3e0; border-left: 5px solid #ff9800; }
+.final-card { background-color: #e8f5e9; border-left: 5px solid #4caf50; }
+.today-card { background-color: #fce4ec; border-left: 5px solid #e91e63; }
+
+/* Status Tag in the Saved Reports Table */
+.status-tag {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-weight: 600;
+}
+
+.status-tag.draft {
+    background-color: #ffe0b2;
+    color: #f57c00; 
+}
+
+.status-tag.final {
+    background-color: #c8e6c9;
+    color: #388e3c; 
+}
+
+/* Ensure common button styles are defined */
+.btn {
+   
+    border: 1px solid #ccc;
+    border-radius: 2px;
+    cursor: pointer;
+}
+.add-report-btn {
+    background-color: #007bff;
+    color: white;
+    padding: 4px 4px;      /* smaller padding */
+    font-size: 0.9em;       /* slightly smaller text */
+    border-radius: 3px;     /* optional: smaller rounded corners */
+}
+.patient-root .top-bar .add-report-btn {
+  padding: 4px 4px;       /* smaller padding */
+  font-size: 0.85rem;      /* smaller text */
+  border-radius: 4px;      /* optional */
+}
+
+.back-btn {
+    background-color: #f0f0f0;
+    color: #333;
+}
+
+/* Top bar spacing override */
+.top-bar {
+  margin-top: 8px !important;
+  padding-top: 8px !important;
+
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+}
+
+/* Heading override */
+.top-bar h2 {
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 22px !important;
+}
+
+/* FIX: Override global .btn styles */
+.add-report-btn,
+.back-btn {
+  padding: 6px 12px !important;
+  font-size: 14px !important;
+  border-radius: 6px !important;
+  background: #1976d2 !important;
+  color: white !important;
+  height: auto !important;
+  line-height: normal !important;
+}

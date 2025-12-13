@@ -1,0 +1,77 @@
+  .dashboard-root {
+  width: 100%;
+  box-sizing: border-box;
+ 
+}
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  margin-bottom: 14px;
+  height: 60px; /* consistent header height */
+}
+
+.header-left h1 {
+  font-size: 22px; /* consistent font size */
+  font-weight: 600; /* consistent weight */
+  margin: 0;
+  color: #04090c; /* optional color */
+}
+
+/* Cards remain the same */
+.cards-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.card {
+  flex: 1 1 220px;
+  min-width: 180px;
+  background: #d7d5df;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 1px 3px rgba(20,20,20,0.06);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 18px rgba(20,20,20,0.08);
+}
+
+.card-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #030b13;
+}
+
+.card-title {
+  margin-top: 8px;
+  font-size: 13px;
+  color: #555;
+}
+.card {
+  position: relative; /* Needed for absolute positioning inside */
+}
+
+.card-date-picker {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 90px;
+  font-size: 12px;
+  padding: 2px 4px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+.dashboard-header h1 {
+  margin-top: 0;
+  padding-top: 0;
+}
