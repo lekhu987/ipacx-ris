@@ -11,6 +11,7 @@ app.use(cors());
 app.use(express.json());
 const fs = require("fs");
 const path = require("path");
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* ==========================
    PostgreSQL CONNECTION
@@ -572,15 +573,34 @@ app.post("/api/reports/upload-image", upload.single("image"), async (req, res) =
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
+    const reportId = req.body.report_id;
+    const imageName = req.file.filename;
+    const imagePath = `uploads/report_images/${imageName}`; // Relative path
+
     const result = await pool.query(
-      "INSERT INTO report_images (report_id, image_path, uploaded_at) VALUES ($1, $2, NOW()) RETURNING *",
-      [req.body.report_id, req.file.path]
+      `INSERT INTO report_images (report_id, image_name, image_path, uploaded_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING *`,
+      [reportId, imageName, imagePath]
     );
 
-    res.json({ success: true, file: req.file.path, dbEntry: result.rows[0] });
+    res.json({ success: true, file: imagePath, dbEntry: result.rows[0] });
   } catch (err) {
     console.error("Image upload error:", err.message);
     res.status(500).json({ error: "Failed to upload image" });
+  }
+});
+app.get("/api/reports/:report_id/images", async (req, res) => {
+  try {
+    const reportId = req.params.report_id;
+    const result = await pool.query(
+      "SELECT id, image_name, image_path, uploaded_at FROM report_images WHERE report_id=$1 ORDER BY uploaded_at DESC",
+      [reportId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch images error:", err.message);
+    res.status(500).json({ error: "Failed to fetch images" });
   }
 });
 
