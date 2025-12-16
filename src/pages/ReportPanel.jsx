@@ -6,10 +6,17 @@ import { jsPDF } from "jspdf";
 import "./ReportPanel.css";
 
 /* ===========================
-   RichEditor component
+   RichEditor Component
 =========================== */
-function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }) {
-  const ref = useRef();
+function RichEditor({
+  value,
+  onChange,
+  onFocus,
+  onSelectionChange,
+  placeholder,
+  locked = false,
+}) {
+  const ref = useRef(null);
 
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== value) {
@@ -26,16 +33,19 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
   return (
     <div
       ref={ref}
-      contentEditable
+      contentEditable={!locked}
       suppressContentEditableWarning
       onFocus={() => {
         if (typeof onFocus === "function") onFocus(ref.current);
         setTimeout(handleSelectionChange, 0);
       }}
-      onInput={(e) => onChange(e.currentTarget.innerHTML)}
+      onInput={(e) => {
+        if (!locked) onChange(e.currentTarget.innerHTML);
+      }}
       onMouseUp={handleSelectionChange}
       onKeyUp={handleSelectionChange}
       onTouchEnd={handleSelectionChange}
+      data-placeholder={placeholder}
       style={{
         minHeight: 100,
         padding: 8,
@@ -45,16 +55,15 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
         overflowY: "auto",
         whiteSpace: "pre-wrap",
       }}
-      data-placeholder={placeholder}
     />
   );
 }
 
 /* ===========================
-   ReportTitle component
+   Report Title
 =========================== */
-function ReportTitle({ value, onChange }) {
-  const ref = useRef();
+function ReportTitle({ value, onChange, locked = false }) {
+  const ref = useRef(null);
 
   useEffect(() => {
     if (ref.current && ref.current.innerText !== value) {
@@ -66,9 +75,11 @@ function ReportTitle({ value, onChange }) {
     <div
       ref={ref}
       className="report-title"
-      contentEditable
+      contentEditable={!locked}
       suppressContentEditableWarning
-      onInput={(e) => onChange(e.currentTarget.innerText)}
+      onInput={(e) => {
+        if (!locked) onChange(e.currentTarget.innerText);
+      }}
       style={{
         fontWeight: "bold",
         fontSize: "14px",
@@ -82,17 +93,20 @@ function ReportTitle({ value, onChange }) {
 /* ===========================
    Helpers
 =========================== */
-const cleanPatientName = (name) => (name ? name.replace(/\^/g, " ").trim() : "");
+const cleanPatientName = (name) =>
+  name ? name.replace(/\^/g, " ").trim() : "";
+
 const formatDicomDateTime = (date, time) => {
   if (!date || !time) return "";
   const d = date.trim();
   const t = time.trim().padEnd(6, "0").substring(0, 6);
-  const iso = `${d.substring(0, 4)}-${d.substring(4, 6)}-${d.substring(
+  const iso = `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(
     6,
     8
-  )}T${t.substring(0, 2)}:${t.substring(2, 4)}:${t.substring(4, 6)}`;
+  )}T${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}`;
   return new Date(iso).toLocaleString();
 };
+
 const formatDateTime = (date) => {
   try {
     return new Date(date).toLocaleString();
@@ -100,6 +114,7 @@ const formatDateTime = (date) => {
     return date;
   }
 };
+
 const extractAgeGender = (rawName, rawAge, rawSex) => {
   let name = rawName || "";
   let age = rawAge || "";
@@ -108,27 +123,26 @@ const extractAgeGender = (rawName, rawAge, rawSex) => {
   if (name.includes("^")) {
     name = name
       .split("^")
-      .filter((n) => n && !n.match(/\d{1,3}Y/i) && !n.match(/[MF]/i))
+      .filter((n) => n && !n.match(/\d{1,3}Y/i))
       .join(" ")
       .trim();
-  } else {
-    name = name.replace(/\d{1,3}\s*Y\/[MF]/i, "").trim();
   }
 
-  const ageMatch = rawName?.match(/(\d{1,3}\s*(Y|M|Months))/i);
+  const ageMatch = rawName?.match(/(\d{1,3}\s*(Y|M))/i);
   if (ageMatch) age = ageMatch[1];
 
   const genderMatch = rawName?.match(/\/([MF])/i);
   if (genderMatch) gender = genderMatch[1].toUpperCase();
 
-  if (!age) age = "N/A";
-  if (!gender) gender = "N/A";
-
-  return { name, age, gender };
+  return {
+    name,
+    age: age || "N/A",
+    gender: gender || "N/A",
+  };
 };
 
 /* ===========================
-   WordColorPicker
+   Color Picker Component
 =========================== */
 function WordColorPicker({ onSelect }) {
   const automaticColor = "#000000";
@@ -229,14 +243,12 @@ function WordColorPicker({ onSelect }) {
 }
 
 /* ===========================
-   Main ReportPanel component
+   Main Component
 =========================== */
-export default function ReportPanel() {
+export default function CreateReport() {
   const [searchParams] = useSearchParams();
   const studyUID = searchParams.get("study");
   const navigate = useNavigate();
-
-  const [showColorPalette, setShowColorPalette] = useState(false); // <-- FIXED
 
   const defaultStudy = {
     PatientName: "",
@@ -249,13 +261,9 @@ export default function ReportPanel() {
     StudyTime: "",
     Modality: "",
     AccessionNumber: "",
-    History: "",
-    Findings: "",
-    Conclusion: "",
     ReportedBy: "",
     ApprovedBy: "",
     ReportStatus: "Draft",
-    reportId: null,
   };
 
   const [study, setStudy] = useState(defaultStudy);
@@ -263,209 +271,186 @@ export default function ReportPanel() {
   const [findings, setFindings] = useState("");
   const [conclusion, setConclusion] = useState("");
   const [keyImages, setKeyImages] = useState([]);
-  const [showKeyImages, setShowKeyImages] = useState(false);
-  const [reportTitle, setReportTitle] = useState("CT REPORT");
   const [loading, setLoading] = useState(true);
+  const [reportTitle, setReportTitle] = useState("CT REPORT");
+
+  const [reportStatus, setReportStatus] = useState("");
+  const isLocked = reportStatus === "Final";
+
+  const [showColorPalette, setShowColorPalette] = useState(false);
+  const [showKeyImages, setShowKeyImages] = useState(false);
 
   const reportRef = useRef(null);
   const fileInputRef = useRef(null);
   const reportedByRef = useRef(null);
   const approvedByRef = useRef(null);
-  const savedRangeRef = useRef(null);
+
   const activeEditorRef = useRef(null);
+  const savedRangeRef = useRef(null);
 
- const endpoints = [
-    (u) => `/api/studies/${u}`,
-    (u) => `/api/study/${u}`,
-    (u) => `/studies/${u}`,
-    (u) => `/api/studies?id=${u}`,
-    (u) => `http://localhost:5000/api/studies/${u}`,
-    (u) => `http://localhost:5000/api/study/${u}`,
-  ]
-  ;
-  useEffect(() => {
-    if (!studyUID) {
+  /* ===========================
+     Load Existing Report
+  =========================== */
+useEffect(() => {
+  async function loadReport() {
+    try {
+      const res = await fetch(`/api/reports/${studyUID}`);
+      if (!res.ok) throw new Error("No report");
+
+      const data = await res.json();
+
+      setHistory(data.report_content?.history || "");
+      setFindings(data.report_content?.findings || "");
+      setConclusion(data.report_content?.conclusion || "");
+      setKeyImages(data.key_images || []);
+
+      setStudy((prev) => ({
+        ...prev,
+        ReportStatus: data.status || "",
+        ReportedBy: data.reported_by || "",
+        ApprovedBy: data.approved_by || "",
+      }));
+
+      setReportStatus(data.status || ""); // show empty if no status
+
+      if (reportedByRef.current)
+        reportedByRef.current.innerText = data.reported_by || "";
+      if (approvedByRef.current)
+        approvedByRef.current.innerText = data.approved_by || "";
+    } catch (e) {
+      console.warn("New report, no existing status");
+      setReportStatus(""); // explicitly set empty for first-time report
+    } finally {
       setLoading(false);
-      return;
     }
-    let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        // 1) fetch study details
-        const studyRes = await fetch(`/api/studies/${encodeURIComponent(studyUID)}`);
-        if (!studyRes.ok) throw new Error("Study not found");
-        const s = await studyRes.json();
+  }
 
-        // 2) attempt to fetch latest report for study (prefill)
-        let report = null;
-        try {
-          const repRes = await fetch(`/api/reports/by-study/${encodeURIComponent(studyUID)}`);
-          if (repRes.ok) {
-            report = await repRes.json();
-          }
-        } catch (e) { /* ignore if not found */ }
+  loadReport();
+}, [studyUID]);
 
-        if (!mounted) return;
 
-        // merge into component state
-        const merged = { ...defaultStudy, ...s };
-        if (report) {
-          merged.ReportStatus = report.status || "Draft";
-          merged.reportId = report.id;
-        }
-        setStudy(merged);
-if (report && report.report_content) {
-  setHistory(report.report_content.History || "");
-  setFindings(report.report_content.Findings || "");
-  setConclusion(report.report_content.Conclusion || "");
-  setReportTitle(
-    report.report_content.ReportTitle ||
-    `${(s.Modality || "").toUpperCase()} ${(s.BodyPartExamined || "").toUpperCase()} REPORT`.trim()
-  );
-
-  // ✅ FIX HERE
-  setKeyImages(Array.isArray(report.key_images) ? report.key_images : []);
-} else {
-  // new report defaults
-  setHistory(s.History || "");
-  setFindings(s.Findings || "");
-  setConclusion(s.Conclusion || "");
-  setReportTitle(
-    `${(s.Modality || "").toUpperCase()} ${(s.BodyPartExamined || "").toUpperCase()} REPORT`.trim() || "REPORT"
-  );
-
-  // ✅ FIX HERE (NO report access)
-  setKeyImages([]);
-}
-
-      } catch (err) {
-        console.error("Load report panel error:", err);
-        // still allow UI
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
-    load();
-    return () => { mounted = false; };
-    // eslint-disable-next-line
-  }, [studyUID]);
-
-  const handleFiles = (files) => {
-    [...files].filter(f => f.type.startsWith("image/")).forEach(f => {
-      const r = new FileReader();
-      r.onload = (e) => setKeyImages(p => [...p, e.target.result]);
-      r.readAsDataURL(f);
-    });
-  };
- const clearImages = () => window.confirm("Clear all key images?") && setKeyImages([]);
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
+  /* ===========================
+     Save Report
+  =========================== */
+  const handleSave = async (status) => {
+  const payload = {
+    study_uid: studyUID,
+    report_content: { history, findings, conclusion },
+    key_images: keyImages,
+    reported_by: reportedByRef.current?.innerText || "",
+    approved_by: approvedByRef.current?.innerText || "",
+    status,
   };
 
-const BACKEND_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+  const res = await fetch("/api/reports/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 
-const handleSaveReport = async (status) => {
-  if (!studyUID) {
-    alert("Missing study UID");
+  if (!res.ok) {
+    alert("Save failed");
     return;
   }
 
-  const content = {
-    ReportTitle: reportTitle || "",
-    History: history || "",
-    Findings: findings || "",
-    Conclusion: conclusion || "",
+  const data = await res.json();
+  setReportStatus(status);           
+  setStudy((p) => ({ ...p, ReportStatus: status }));
+
+  if (status === "Draft") navigate("/reporting");
+};
+
+  /* ===========================
+     File Handlers
+  =========================== */
+const handleFiles = async (files) => {
+  if (isLocked) return;
+
+  const imageFiles = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!imageFiles.length) return;
+
+  const formData = new FormData();
+  imageFiles.forEach((f) => formData.append("images", f));
+
+  // Directly use studyUID
+  const res = await fetch(`/api/reports/upload-images-by-study/${studyUID}`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) return alert("Image upload failed");
+
+  const data = await res.json();
+  setKeyImages((prev) => [...prev, ...data.images.map((img) => img.image_path)]);
+};
+
+  /* ===========================
+     Selection Utilities
+  =========================== */
+  const saveSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    try {
+      savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+    } catch {
+      savedRangeRef.current = null;
+    }
   };
 
-  const payload = {
-  study_uid: studyUID,
-  accession_number: study.AccessionNumber || "",  // <--- add this
-  patient_id: study.PatientID || "",
-  patient_name: study.PatientName || "",
-  modality: study.Modality || "",
-  report_content: content,
-  key_images: keyImages,
-  reported_by: reportedByRef.current?.innerText || study.ReportedBy || "",
-  approved_by: approvedByRef.current?.innerText || study.ApprovedBy || "",
-  status,
-};
-
-  try {
-    let res;
-
-    if (study.reportId) {
-      // Existing report: update draft/final
-      res = await fetch(`${BACKEND_URL}/api/reports/draft/${study.reportId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (status === "Final") {
-        // Finalize report separately
-        res = await fetch(`${BACKEND_URL}/api/reports/finalize/${study.reportId}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-  patient_name: study.PatientName,
-  patient_id: study.PatientID,
-  modality: study.Modality,
-  report_content: {
-    ReportTitle: reportTitle,
-    History: history,
-    Findings: findings,
-    Conclusion: conclusion,
-  },
-  key_images: keyImages,
-  reported_by: reportedByRef.current?.innerText || study.ReportedBy || "",
-  approved_by: approvedByRef.current?.innerText || study.ApprovedBy || "",
-  accession_number: study.AccessionNumber || "",
-  study_uid: studyUID,
-  status: "Final"
-})
-
-        });
-      }
-    } else {
-      // New report: create draft
-      res = await fetch(`${BACKEND_URL}/api/reports/draft`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (status === "Final") {
-        const newReport = await res.json();
-        res = await fetch(`${BACKEND_URL}/api/reports/finalize/${newReport.draft.id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ approved_by: payload.approved_by }),
-        });
-      }
+  const restoreSelection = () => {
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    if (savedRangeRef.current) {
+      try {
+        sel.addRange(savedRangeRef.current);
+      } catch {}
     }
+  };
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || "Server returned error");
+  /* ===========================
+     execCommand Wrapper
+  =========================== */
+  const exec = (cmd, val = null) => {
+    restoreSelection();
+    try {
+      document.execCommand("styleWithCSS", false, true);
+    } catch {}
+    try {
+      document.execCommand(cmd, false, val);
+    } catch (e) {
+      console.warn("exec failed", cmd, val, e);
     }
+    saveSelection();
+  };
 
-    const result = await res.json();
-    const newId = result.report?.id || result.draft?.id || study.reportId || null;
+  const handleEditorFocus = (domNode) => {
+    activeEditorRef.current = domNode;
+    setTimeout(saveSelection, 0);
+  };
 
-    setStudy((prev) => ({ ...prev, reportId: newId, ReportStatus: status }));
-    alert(`Report saved as ${status}`);
-    navigate("/reporting", { replace: true, state: { reportSaved: true } });
-  } catch (err) {
-    console.error("Save report error:", err);
-    alert("Failed to save report: " + (err.message || ""));
-  }
-};
+  const handleEditorSelectionChange = () => saveSelection();
 
+  const applyColor = (color) => {
+    restoreSelection();
+    try {
+      document.execCommand("styleWithCSS", false, true);
+    } catch {}
+    try {
+      document.execCommand("foreColor", false, color);
+    } catch (e) {
+      console.warn("foreColor failed:", e);
+    }
+    setShowColorPalette(false);
+    saveSelection();
+  };
+
+  /* ===========================
+     PDF Export
+  =========================== */
   const savePDF = async () => {
     if (!reportRef.current) return;
+
     const el = reportRef.current;
     const origHeight = el.style.height;
     const origOverflow = el.style.overflow;
@@ -473,7 +458,9 @@ const handleSaveReport = async (status) => {
     el.style.overflow = "visible";
 
     const imgs = [...el.querySelectorAll("img")];
-    await Promise.all(imgs.map(i => (i.complete ? Promise.resolve() : new Promise(r => { i.onload = i.onerror = r; }))));
+    await Promise.all(
+      imgs.map((i) => (i.complete ? Promise.resolve() : new Promise((r) => (i.onload = i.onerror = r))))
+    );
 
     const canvas = await html2canvas(el, { scale: 2, useCORS: true });
     const img = canvas.toDataURL("image/png");
@@ -494,96 +481,11 @@ const handleSaveReport = async (status) => {
         remaining -= pageHeight;
       }
     }
-    pdf.save(`${cleanPatientName(study.PatientName) || "Report"}.pdf`);
+
+    pdf.save(`${study?.PatientName || "Report"}.pdf`);
+
     el.style.height = origHeight;
     el.style.overflow = origOverflow;
-  };
-/* ============
-     Selection utilities
-     ... (Selection utility functions remain unchanged) ...
-     ============ */
-  const saveSelection = () => {
-    const sel = window.getSelection();
-    if (!sel) return;
-    if (sel.rangeCount > 0) {
-      try {
-        savedRangeRef.current = sel.getRangeAt(0).cloneRange();
-      } catch (e) {
-        savedRangeRef.current = null;
-      }
-    }
-  };
-
-  const restoreSelection = () => {
-    const sel = window.getSelection();
-    if (!sel) return;
-    sel.removeAllRanges();
-    if (savedRangeRef.current) {
-      try {
-        sel.addRange(savedRangeRef.current);
-      } catch {
-        // ignore
-      }
-    }
-  };
-
-  // exec with selection restore (works for foreColor etc)
-  const exec = (cmd, val = null) => {
-    // try to restore selection first
-    restoreSelection();
-    // ensure styleWithCSS so color uses inline style
-    try {
-      document.execCommand("styleWithCSS", false, true);
-    } catch {}
-    try {
-      document.execCommand(cmd, false, val);
-    } catch (e) {
-      console.warn("exec failed", cmd, val, e);
-    }
-    // after exec, update savedRangeRef (so future ops keep correct range)
-    saveSelection();
-  };
-
-  // toolbar definition
-  const toolbar = [
-    { type: "bold", icon: "B" },
-    { type: "italic", icon: "I" },
-    { type: "underline", icon: "U" },
-    { type: "insertOrderedList", icon: "OL" },
-    { type: "insertUnorderedList", icon: "UL" },
-  ];
-
-  /* ================
-     Active editor handlers passed to RichEditor
-     ================ */
-  const handleEditorFocus = (domNode) => {
-    activeEditorRef.current = domNode;
-    // save selection at focus
-    setTimeout(saveSelection, 0);
-  };
-
-  const handleEditorSelectionChange = () => {
-    // whenever selection inside an editor changes, capture it
-    saveSelection();
-  };
-
-  /* ====================
-     Color picker apply handler
-     ==================== */
-  const applyColor = (color) => {
-    // restore selection and apply
-    restoreSelection();
-    try {
-      document.execCommand("styleWithCSS", false, true);
-    } catch {}
-    try {
-      document.execCommand("foreColor", false, color);
-    } catch (e) {
-      console.warn("foreColor failed:", e);
-    }
-    setShowColorPalette(false);
-    // update saved selection
-    saveSelection();
   };
 
   if (loading) return <p style={{ padding: 12 }}>Loading…</p>;
@@ -594,10 +496,20 @@ const handleSaveReport = async (status) => {
     study.PatientSex
   );
 
-  return (
-    <div className="split-layout" style={{ display: "flex", height: "100vh", position: "relative", fontFamily: "'Times New Roman', Times, serif" }}>
-    
+  /* Toolbar buttons */
+  const toolbar = [
+    { type: "bold", icon: "B" },
+    { type: "italic", icon: "I" },
+    { type: "underline", icon: "U" },
+    { type: "insertOrderedList", icon: "OL" },
+    { type: "insertUnorderedList", icon: "UL" },
+  ];
 
+  return (
+    <div
+      className="split-layout"
+      style={{ display: "flex", height: "100vh", position: "relative", fontFamily: "'Times New Roman', Times, serif" }}
+    >
       {/* Report Panel */}
       <div
         ref={reportRef}
@@ -610,9 +522,7 @@ const handleSaveReport = async (status) => {
           overflowY: "auto",
         }}
       >
-        <header style={{ display: "none" }} />
-
-        {/* Toolbar row - UPDATED BUTTONS */}
+        {/* Toolbar */}
         <div className="top-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
           <div className="editor-toolbar toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <select title="Font size" onChange={(e) => exec("fontSize", e.target.value)} defaultValue="3" style={{ height: 28 }}>
@@ -632,56 +542,39 @@ const handleSaveReport = async (status) => {
               <option value="Georgia">Georgia</option>
             </select>
 
-            {/* Color picker button + palette */}
-            <div style={{ position: "relative" }} onMouseLeave={() => {/* keep open/closing handled by click*/} }>
+            {/* Color picker */}
+            <div style={{ position: "relative" }}>
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  // Save current selection before opening palette
-                  saveSelection();
-                  setShowColorPalette((s) => !s);
-                }}
+                onClick={() => setShowColorPalette((s) => !s)}
                 style={{ height: 28 }}
               >
                 A ▼
               </button>
-
               {showColorPalette && (
                 <div style={{ position: "absolute", top: 34, left: 0 }}>
-                  <WordColorPicker onSelect={(color) => applyColor(color)} />
+                  <WordColorPicker onSelect={applyColor} />
                 </div>
               )}
             </div>
 
-            {/* toolbar buttons */}
+            {/* Toolbar buttons */}
             {toolbar.map((t) => (
               <button key={t.type} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec(t.type)} style={{ height: 28 }}>
                 {t.icon}
               </button>
             ))}
 
-            <button
-              type="button"
-              className="template-btn"
-              onClick={() => alert("Open template selector")}
-              style={{ height: 28 }}
-            >
+            <button type="button" className="template-btn" onClick={() => alert("Open template selector")} style={{ height: 28 }}>
               + Template
             </button>
 
             <button
               type="button"
               onClick={() => {
-                // If not shown previously, show and open file dialog
-                if (!showKeyImages) {
-                  setShowKeyImages(true);
-                  // open file dialog after a tick (so section is visible)
-                  setTimeout(() => fileInputRef.current?.click(), 50);
-                } else {
-                  // if shown, open file dialog directly
-                  fileInputRef.current?.click();
-                }
+                if (!showKeyImages) setShowKeyImages(true);
+                setTimeout(() => fileInputRef.current?.click(), 50);
               }}
               style={{ height: 28 }}
             >
@@ -690,29 +583,76 @@ const handleSaveReport = async (status) => {
           </div>
 
           <div className="status-buttons" style={{ display: "flex", gap: 6 }}>
-            {/* DRAFT BUTTON: Calls handleSaveReport with "Draft" status */}
-            <button 
-              className="status-btn draft" 
-              onClick={() => handleSaveReport("Draft")}
+            <button
+              className="status-btn draft"
+              onClick={() => handleSave("Draft")}
               style={{ padding: "6px 14px", borderRadius: 4, background: "#6c757d", color: "#fff" }}
             >
               Draft
             </button>
-            
-            {/* FINAL BUTTON: Calls handleSaveReport with "Final" status */}
-            <button 
-              className="status-btn final" 
-              onClick={() => handleSaveReport("Final")}
-              style={{ padding: "6px 14px", borderRadius: 4, background: "#198754", color: "#fff" }}
+
+            <button
+              className="status-btn final"
+              disabled={reportStatus === "Final" || !approvedByRef.current?.innerText?.trim()}
+              onClick={() => handleSave("Final")}
+              style={{
+                padding: "6px 14px",
+                borderRadius: 4,
+                background: reportStatus === "Final" || !approvedByRef.current?.innerText?.trim() ? "#adb5bd" : "#198754",
+                color: "#fff",
+                cursor: reportStatus === "Final" || !approvedByRef.current?.innerText?.trim() ? "not-allowed" : "pointer",
+              }}
             >
               Final
             </button>
-            
-            <button className="status-btn close" onClick={() => navigate("/reporting")} style={{ padding: "6px 14px", borderRadius: 4, background: "#dc3545", color: "#fff" }}>X</button>
+
+            <button className="status-btn close" onClick={() => navigate("/reporting")} style={{ padding: "6px 14px", borderRadius: 4, background: "#dc3545", color: "#fff" }}>
+              X
+            </button>
           </div>
         </div>
 
-        {/* Patient table */}
+        {/* Status Indicator */}
+        <div
+  style={{
+    marginBottom: 10,
+    display: "flex",
+    justifyContent: "flex-end",
+  }}
+>
+  <span
+    style={{
+      padding: "4px 12px",
+      borderRadius: 12,
+      fontSize: 11,
+      fontWeight: "bold",
+      textTransform: "uppercase",
+      background:
+        study.ReportStatus === "Final"
+          ? "#d1e7dd"
+          : study.ReportStatus === "Draft"
+          ? "#fff3cd"
+          : "#f8d7da", // redish for not saved
+      color:
+        study.ReportStatus === "Final"
+          ? "#0f5132"
+          : study.ReportStatus === "Draft"
+          ? "#856404"
+          : "#842029", // redish text for not saved
+      border: "1px solid",
+      borderColor:
+        study.ReportStatus === "Final"
+          ? "#badbcc"
+          : study.ReportStatus === "Draft"
+          ? "#ffecb5"
+          : "#f5c2c7", // border for not saved
+    }}
+  >
+    Status: {study.ReportStatus || "Not Saved"}
+  </span>
+</div>
+
+        {/* Patient Table */}
         <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", marginBottom: 12 }}>
           <tbody>
             <tr>
@@ -726,11 +666,9 @@ const handleSaveReport = async (status) => {
                 <strong>Patient ID:</strong> {study.PatientID}
               </td>
             </tr>
-
             <tr>
               <td style={{ padding: 6, border: "1px solid #000" }}>
-                <strong>Study Date/Time:</strong>{" "}
-                {formatDicomDateTime(study.StudyDate, study.StudyTime)}
+                <strong>Study Date/Time:</strong> {formatDicomDateTime(study.StudyDate, study.StudyTime)}
               </td>
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Ref. Doctor:</strong>{" "}
@@ -747,7 +685,6 @@ const handleSaveReport = async (status) => {
                 <strong>Accession No:</strong> {study.AccessionNumber}
               </td>
             </tr>
-
             <tr>
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Reported Date/Time:</strong> {formatDateTime(new Date())}
@@ -806,14 +743,12 @@ const handleSaveReport = async (status) => {
                 onClick={(e) => {
                   e.stopPropagation();
                   setShowKeyImages(false);
-                  // keep current images or clear them depending on desired behaviour
                 }}
               >
                 ✕
               </button>
             </h3>
 
-            {/* hidden input (will open when container clicked or "Key Images" clicked) */}
             <input
               ref={fileInputRef}
               type="file"
@@ -855,7 +790,7 @@ const handleSaveReport = async (status) => {
                       position: "absolute",
                       top: 4,
                       right: 4,
-                      background: "rgba(34, 18, 18, 0.6)",
+                      background: "rgba(0,0,0,0.6)",
                       color: "#fff",
                       border: "none",
                       borderRadius: 12,
@@ -886,20 +821,36 @@ const handleSaveReport = async (status) => {
 
         <footer className="footer-row" style={{ display: "flex", justifyContent: "space-between", marginTop: 30 }}>
           <div style={{ fontWeight: "bold", fontSize: 11 }}>
-            Reported By: <span ref={reportedByRef} contentEditable suppressContentEditableWarning style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}>
+            Reported By:{" "}
+            <span
+              ref={reportedByRef}
+              contentEditable
+              suppressContentEditableWarning
+              style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}
+            >
               {study.ReportedBy}
             </span>
           </div>
           <div style={{ fontWeight: "bold", fontSize: 11 }}>
-            Approved By: <span ref={approvedByRef} contentEditable suppressContentEditableWarning style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}>
+            Approved By:{" "}
+            <span
+              ref={approvedByRef}
+              contentEditable
+              suppressContentEditableWarning
+              style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}
+            >
               {study.ApprovedBy}
             </span>
           </div>
         </footer>
 
         <div className="buttons toolbar" style={{ marginTop: 12 }}>
-          <button onClick={savePDF} style={{ padding: "8px 12px" }}>Save PDF</button>
-          <button onClick={() => window.print()} style={{ padding: "8px 12px", marginLeft: 8 }}>Print</button>
+          <button onClick={savePDF} style={{ padding: "8px 12px" }}>
+            Save PDF
+          </button>
+          <button onClick={() => window.print()} style={{ padding: "8px 12px", marginLeft: 8 }}>
+            Print
+          </button>
         </div>
       </div>
     </div>
