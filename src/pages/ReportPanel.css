@@ -350,86 +350,28 @@
 }
 
 @media print {
-  #reportPanel,
-  .report-only-print {
+
+  /* Hide ONLY viewer */
+  #viewerPanel,
+  .viewer-panel,
+  iframe {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    visibility: hidden !important;
+  }
+
+  /* Show report panel fully */
+  #reportPanel {
+    display: block !important;
     width: 100% !important;
-    max-width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
     padding: 0 !important;
     margin: 0 !important;
-    background: white !important;
   }
 
-  /* Hide editing UI */
-  .toolbar,
-  .editor-toolbar,
-  .report-status-bar,
-  .buttons,
-  button,
-  input[type="color"],
-  select,
-  .template-btn,
-  .label-colour {
-    display: none !important;
+  .split-layout {
+    display: block !important;
   }
-
-  /* Letterhead space */
-  @page {
-    margin-top: 30mm;
-  }
-
-  /* Print rendering */
-  body {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
-  }
-
-  /* ContentEditable cleanup */
-  [contenteditable] {
-    border: none !important;
-    background: transparent !important;
-    white-space: pre-wrap !important;
-  }
-
-    /* ==============================
-     PERFECT TABLE BORDERS (Guaranteed)
-     ============================== */
-  table.data-table,
-  table.data-table tr,
-  table.data-table td {
-    border: 1px solid #000 !important;
-    border-collapse: collapse !important;
-  }
-
-  /* Extra fix ONLY for last right border issue */
-  table.data-table tr td:last-child {
-    position: relative !important;
-  }
-
-  table.data-table tr td:last-child::after {
-    content: "";
-    position: absolute;
-    right: 0;
-    top: 0;
-    height: 100%;
-    width: 1px;
-    background: #000 !important;   /* forces the line */
-    print-color-adjust: exact !important;
-    -webkit-print-color-adjust: exact !important;
-  }
-  /* Equal 3 columns in print */
-table.data-table td {
-  width: 33.33% !important;
-}
- /* Key images print */
-  .key-images {
-    border: none !important;
-    padding: 0 !important;
-    margin: 10px 0 !important;
-  }
-  .key-images img {
-    border: none !important;
-    max-width: 150px !important;
-    page-break-inside: avoid !important;
-  }
-
 }

@@ -49,11 +49,7 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
     />
   );
 }
-
-/* ===========================
-      ReportTitle component
-   ========================== */
-function ReportTitle({ value, onChange }) {
+function ReportTitle({ value, onChange, onManualEdit }) {
   const ref = useRef();
 
   useEffect(() => {
@@ -68,7 +64,10 @@ function ReportTitle({ value, onChange }) {
       className="report-title"
       contentEditable
       suppressContentEditableWarning
-      onInput={(e) => onChange(e.currentTarget.innerText)}
+      onBlur={(e) => {
+        onChange(e.currentTarget.innerText);
+        onManualEdit(); // ✅ user finished typing
+      }}
       style={{
         fontWeight: "bold",
         fontSize: "14px",
@@ -78,6 +77,7 @@ function ReportTitle({ value, onChange }) {
     />
   );
 }
+
 
 /* ===========================
       Helper functions
@@ -105,42 +105,70 @@ const formatDateTime = (date) => {
 
 const extractAgeGender = (rawName, rawAge, rawSex) => {
   let name = rawName || "";
-  let age = rawAge || "";
-  let gender = rawSex || "";
+  let age = "";
+  let gender = "";
 
-  // 1️⃣ If DICOM "^" format
+  // 1️⃣ DICOM style parsing (^ separated)
   if (name.includes("^")) {
     const parts = name.split("^").map(p => p.trim());
-    name = parts.filter(p => !p.match(/\d{1,3}Y/i) && !p.match(/[MF]/i)).join(" ");
-    // age & gender may be last part
-    const lastPart = parts[parts.length - 1];
-    const ageMatch = lastPart?.match(/(\d{1,3})Y/i);
-    if (ageMatch) age = ageMatch[1];
-    const genderMatch = lastPart?.match(/([MF])/i);
-    if (genderMatch) gender = genderMatch[1].toUpperCase();
-  } 
-  // 2️⃣ If "Name AGE/GENDER" format
-  else {
-    const ageGenderMatch = name.match(/(\d{1,3})\s*(Y|M)\/([MF])/i);
-    if (ageGenderMatch) {
-      age = ageGenderMatch[1];
-      gender = ageGenderMatch[3].toUpperCase();
-      name = name.replace(ageGenderMatch[0], "").trim();
-    } else {
-      // Try to extract just age like 30Y
-      const ageMatch = name.match(/(\d{1,3})Y/i);
+    const nameParts = [];
+
+    for (const p of parts) {
+      // Match age/gender like 27Y/F
+      const agMatch = p.match(/^(\d{1,3})Y?\/([MFO])$/i);
+      if (agMatch) {
+        age = agMatch[1];
+        gender = agMatch[2].toUpperCase();
+        continue;
+      }
+
+      // Match age only like 27Y
+      const ageMatch = p.match(/^(\d{1,3})Y$/i);
       if (ageMatch) {
         age = ageMatch[1];
-        name = name.replace(ageMatch[0], "").trim();
+        continue;
       }
+
+      // Match gender only like M/F/O
+      const genderMatch = p.match(/^([MFO])$/i);
+      if (genderMatch) {
+        gender = genderMatch[1].toUpperCase();
+        continue;
+      }
+
+      // Otherwise, part of name
+      nameParts.push(p);
+    }
+
+    name = nameParts.join(" ").trim();
+  }
+
+  // 2️⃣ Plain text parsing for formats like "NAME 24Y/M"
+  if (!age || !gender) {
+    const plainMatch = name.match(/(\d{1,3})Y?\/([MFO])/i);
+    if (plainMatch) {
+      age = age || plainMatch[1];
+      gender = gender || plainMatch[2].toUpperCase();
+      name = name.replace(plainMatch[0], "").trim();
     }
   }
 
-  if (!age) age = "N/A";
-  if (!gender) gender = "N/A";
+  // 3️⃣ Fallback to rawAge/rawSex fields
+  if (!age && rawAge) age = rawAge;
+  if (!gender && rawSex && rawSex !== "O") gender = rawSex;
 
-  return { name, age, gender };
+  // 4️⃣ Final clean name
+  name = name.replace(/\^/g, " ").replace(/\s+/g, " ").trim();
+  if (!name) name = "N/A";
+
+  // Return standardized object
+  return {
+    name,
+    age: age || "N/A",
+    gender: gender || "N/A",
+  };
 };
+
 
 
 /* ===========================
@@ -262,7 +290,7 @@ export default function CreateReport() {
     ApprovedBy: "",
     ReportStatus: "",
   };
-
+  const [isLoadingReport, setIsLoadingReport] = useState(true);
   const [study, setStudy] = useState(defaultStudy);
   const [history, setHistory] = useState("");
   const [findings, setFindings] = useState("");
@@ -280,7 +308,18 @@ export default function CreateReport() {
   const [showColorPalette, setShowColorPalette] = useState(false);
   const refDoctorRef = useRef(null);
 const bodyPartRef = useRef(null);
-  // Sync ReportedBy span after study state changes
+const [isManualTitle, setIsManualTitle] = useState(false);
+const [editRefDoctor, setEditRefDoctor] = useState(false);
+const [editBodyPart, setEditBodyPart] = useState(false);
+
+
+
+useEffect(() => {
+  if (refDoctorRef.current && refDoctorRef.current.innerText !== study.ReferringPhysicianName) {
+    refDoctorRef.current.innerText = study.ReferringPhysicianName || "";
+  }
+}, [study.ReferringPhysicianName]);
+
 useEffect(() => {
   if (reportedByRef.current && reportedByRef.current.textContent !== study.ReportedBy) {
     reportedByRef.current.textContent = study.ReportedBy || "";
@@ -302,9 +341,11 @@ useEffect(() => {
 
   const loadStudyAndReport = async () => {
     try {
+      // 1️⃣ Load study info
       const studyRes = await fetch(`http://localhost:5000/api/studies/${studyUID}`);
       const studyData = (await studyRes.json()) || {};
 
+      // 2️⃣ Load report (draft/final)
       const reportRes = await fetch(`/api/reports/by-study/${studyUID}`);
       let reportData = null;
       if (reportRes.ok) {
@@ -317,61 +358,29 @@ useEffect(() => {
 
       const reportContent = reportData?.report_content || {};
 
-      setStudy(prev => ({
-  ...prev,
-  PatientName:
-    studyData.PatientName ||
-    studyData.patient_name ||
-    studyData.patientName ||
-    "",
-
-  PatientAge:
-    studyData.PatientAge ||
-    studyData.patient_age ||
-    "",
-
-  PatientSex:
-    studyData.PatientSex ||
-    studyData.patient_sex ||
-    "",
-
-  PatientID:
-    studyData.PatientID ||
-    studyData.patient_id ||
-    "",
-
-  AccessionNumber:
-    studyData.AccessionNumber ||
-    studyData.accession_number ||
-    "",
-
-  Modality: studyData.Modality || studyData.modality || "",
-
-  StudyDate: studyData.StudyDate || studyData.study_date || "",
-  StudyTime: studyData.StudyTime || studyData.study_time || "",
-
-  ReferringPhysicianName:
-    studyData.ReferringPhysicianName ||
-    studyData.referring_physician ||
-    prev.ReferringPhysicianName ||
-    "",
-
-  BodyPartExamined:
-    studyData.BodyPartExamined ||
-    studyData.body_part ||
-    prev.BodyPartExamined ||
-    "",
-
-  ReportedBy: reportData?.reported_by || prev.ReportedBy || "",
-  ApprovedBy: reportData?.approved_by || prev.ApprovedBy || "",
-  ReportStatus: reportData?.status || "Draft",
-}));
-
+      // 3️⃣ Update state
+      setStudy({
+        PatientName: studyData.PatientName || studyData.patient_name || "",
+        PatientAge: studyData.PatientAge || studyData.patient_age || "",
+        PatientSex: studyData.PatientSex || studyData.patient_sex || "",
+        PatientID: studyData.PatientID || studyData.patient_id || "",
+        AccessionNumber: studyData.AccessionNumber || studyData.accession_number || "",
+        Modality: studyData.Modality || studyData.modality || "",
+        StudyDate: studyData.StudyDate || studyData.study_date || "",
+        StudyTime: studyData.StudyTime || studyData.study_time || "",
+        ReferringPhysicianName: reportData?.referring_doctor || studyData.ReferringPhysicianName || studyData.referring_physician || "",
+        BodyPartExamined: reportData?.body_part || studyData.BodyPartExamined || studyData.body_part || "",
+        ReportedBy: reportData?.reported_by || "",
+        ApprovedBy: reportData?.approved_by || "",
+        ReportStatus: reportData?.status || "",
+      });
+      setIsLoadingReport(false);
 
       setHistory(reportContent.history || "");
       setFindings(reportContent.findings || "");
       setConclusion(reportContent.conclusion || "");
 
+      // 4️⃣ Load key images if present
       if (Array.isArray(reportData?.images) && reportData.images.length > 0) {
         const loadedImages = reportData.images.map(img =>
           img.image_path.startsWith("http") ? img.image_path : `http://localhost:5000${img.image_path}`
@@ -385,12 +394,15 @@ useEffect(() => {
 
     } catch (err) {
       console.error("Failed to load study/report", err);
+
+      // fallback to empty/defaults
       setStudy(prev => ({
         ...prev,
         ReportStatus: "Draft",
         ReportedBy: prev.ReportedBy || "",
         ApprovedBy: prev.ApprovedBy || "",
       }));
+      setReportTitle("CT REPORT");
       setHistory("");
       setFindings("");
       setConclusion("");
@@ -403,6 +415,20 @@ useEffect(() => {
 
   loadStudyAndReport();
 }, [studyUID]);
+
+useEffect(() => {
+  if (isLoadingReport) return;        // 🔴 STOP during load
+  if (isManualTitle) return;
+
+  const modality = study.Modality?.trim();
+  const bodyPart = study.BodyPartExamined?.trim();
+
+  if (!modality) return;
+
+  const title = `${modality}${bodyPart ? " " + bodyPart : ""} REPORT`;
+  setReportTitle(title);
+}, [study.Modality, study.BodyPartExamined, isManualTitle, isLoadingReport]);
+
 
   /* ===========================
         Handle file uploads
@@ -460,6 +486,7 @@ const handleSaveReport = async (status) => {
     history,
     findings,
     conclusion,
+    reportTitle,
     referring_doctor: study.ReferringPhysicianName,
     body_part: study.BodyPartExamined,
     image_paths: keyImages.map((url) => url.replace("http://localhost:5000", "")),
@@ -765,17 +792,30 @@ const handleSaveReport = async (status) => {
                 <strong>Study Date/Time:</strong>{" "}
                 {formatDicomDateTime(study.StudyDate, study.StudyTime)}
               </td>
-      <td>
+      <td style={{ padding: 6, border: "1px solid #000" }}>
   <strong>Ref. Doctor:</strong>{" "}
-  <span
-    contentEditable
-    suppressContentEditableWarning
-    onInput={(e) => setStudy(prev => ({ ...prev, ReferringPhysicianName: e.target.textContent || "" }))}
-    style={{ borderBottom: "1px dashed #aaa" }}
-  >
-    {study.ReferringPhysicianName}
-  </span>
+  {editRefDoctor ? (
+    <input
+      autoFocus
+      value={study.ReferringPhysicianName || ""}
+      onChange={(e) =>
+        setStudy((p) => ({ ...p, ReferringPhysicianName: e.target.value }))
+      }
+      onBlur={() => setEditRefDoctor(false)}
+      onKeyDown={(e) => e.key === "Enter" && setEditRefDoctor(false)}
+      style={{ width: "70%" }}
+    />
+  ) : (
+    <span
+      onClick={() => setEditRefDoctor(true)}
+      
+    >
+      {study.ReferringPhysicianName || "—"}
+    </span>
+  )}
 </td>
+
+
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Accession No:</strong> {study.AccessionNumber}
               </td>
@@ -788,22 +828,40 @@ const handleSaveReport = async (status) => {
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Modality:</strong> {study.Modality}
               </td>
-             <td>
+             <td style={{ padding: 6, border: "1px solid #000" }}>
   <strong>Body Part:</strong>{" "}
-  <span
-    contentEditable
-    suppressContentEditableWarning
-    onInput={(e) => setStudy(prev => ({ ...prev, BodyPartExamined: e.target.textContent || "" }))}
-    style={{ borderBottom: "1px dashed #aaa" }}
-  >
-    {study.BodyPartExamined}
-  </span>
+  {editBodyPart ? (
+    <input
+      autoFocus
+      value={study.BodyPartExamined || ""}
+      onChange={(e) =>
+        setStudy((p) => ({ ...p, BodyPartExamined: e.target.value }))
+      }
+      onBlur={() => setEditBodyPart(false)}
+      onKeyDown={(e) => e.key === "Enter" && setEditBodyPart(false)}
+      style={{ width: "70%" }}
+    />
+  ) : (
+    <span
+      onClick={() => setEditBodyPart(true)}
+      
+    >
+      {study.BodyPartExamined || "—"}
+    </span>
+  )}
 </td>
             </tr>
           </tbody>
         </table>
 
-        <ReportTitle value={reportTitle} onChange={setReportTitle} />
+       <ReportTitle
+  value={reportTitle}
+  onChange={setReportTitle}
+  onManualEdit={() => setIsManualTitle(true)}
+/>
+
+
+
 
         {/* History */}
         <section className="section" style={{ marginBottom: 20 }}>

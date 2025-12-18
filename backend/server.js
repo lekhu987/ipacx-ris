@@ -350,7 +350,8 @@ app.post("/api/reports/upload", upload.array("images", 10), (req, res) => {
 app.post("/api/reports/save", async (req, res) => {
   try {
     const { study_uid, accession_number, patient_id, patient_name, modality,
-      reported_by, approved_by, status, history, findings, conclusion, image_paths } = req.body;
+            reported_by, approved_by, status, history, findings, conclusion,
+            reportTitle, body_part, referring_doctor, image_paths } = req.body;
 
     const reportContent = { history, findings, conclusion };
 
@@ -358,22 +359,28 @@ app.post("/api/reports/save", async (req, res) => {
       `
       INSERT INTO reports (
         study_uid, accession_number, patient_id, patient_name,
-        modality, report_content, reported_by, approved_by, status
+        modality, report_content, reported_by, approved_by, status,
+        report_title, body_part, referring_doctor
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
       ON CONFLICT (study_uid)
       DO UPDATE SET
         report_content = EXCLUDED.report_content,
         reported_by = EXCLUDED.reported_by,
         approved_by = EXCLUDED.approved_by,
-        status = EXCLUDED.status
+        status = EXCLUDED.status,
+        report_title = EXCLUDED.report_title,
+        body_part = EXCLUDED.body_part,
+        referring_doctor = EXCLUDED.referring_doctor
       RETURNING id
       `,
-      [study_uid, accession_number, patient_id, patient_name, modality, reportContent, reported_by, approved_by, status || "Draft"]
+      [study_uid, accession_number, patient_id, patient_name, modality, reportContent,
+       reported_by, approved_by, status || "Draft", reportTitle, body_part, referring_doctor]
     );
 
     const reportId = reportResult.rows[0].id;
 
+    // Handle images
     if (Array.isArray(image_paths) && image_paths.length) {
       await pool.query("DELETE FROM report_images WHERE report_id=$1", [reportId]);
       for (let i = 0; i < image_paths.length; i++) {
@@ -390,6 +397,7 @@ app.post("/api/reports/save", async (req, res) => {
     res.status(500).json({ error: "Failed to save report" });
   }
 });
+
 
 /* ======================================================
    GET REPORT BY STUDY UID
@@ -409,12 +417,20 @@ app.get("/api/reports/by-study/:uid", async (req, res) => {
       [report.id]
     );
 
-    res.json({ ...report, report_content: report.report_content, images: imagesRes.rows });
+    res.json({ 
+      ...report,
+      report_content: report.report_content,
+      report_title: report.report_title,
+      body_part: report.body_part,
+      referring_doctor: report.referring_doctor,
+      images: imagesRes.rows 
+    });
   } catch (err) {
     console.error("Fetch report error:", err.message);
     res.status(500).json({ error: "Failed to load report" });
   }
 });
+
 
 /* ======================================================
    START SERVER
