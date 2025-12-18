@@ -8,6 +8,7 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import "./print.css";
 
 
 // --- Enable React Router v7 future flags ---

@@ -3,19 +3,23 @@ const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const { Pool } = require("pg");
-const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
+const multer = require("multer");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+app.use(
+  "/uploads/report_images",
+  express.static(path.join(__dirname, "uploads/report_images"))
+);
 
-// ==========================
-// PostgreSQL Connection
-// ==========================
+/* ======================================================
+   PostgreSQL CONNECTION
+====================================================== */
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || "localhost",
   port: process.env.POSTGRES_PORT || 5432,
@@ -24,18 +28,18 @@ const pool = new Pool({
   database: process.env.POSTGRES_DB || "RIS",
 });
 
-// ==========================
-// Orthanc Configuration
-// ==========================
+/* ======================================================
+   ORTHANC CONNECTION CONFIG
+====================================================== */
 const ORTHANC_URL = (process.env.ORTHANC_URL || "http://192.168.1.34:8042/").replace(/\/?$/, "/");
 const ORTHANC_AUTH = {
   username: process.env.ORTHANC_USER || "lekhana",
   password: process.env.ORTHANC_PASS || "lekhana",
 };
 
-// ==========================
-// Helper: Extract age from PatientName
-// ==========================
+/* ======================================================
+   AGE PARSER FROM PatientName
+====================================================== */
 function extractAgeFromName(name) {
   if (!name) return "N/A";
   const ageMatch = name.match(/(\d{1,3})\s*Y/i);
@@ -45,25 +49,9 @@ function extractAgeFromName(name) {
   return "N/A";
 }
 
-// ==========================
-// Multer Setup for uploads
-// ==========================
-const uploadFolder = "uploads/reports/";
-if (!fs.existsSync(uploadFolder)) fs.mkdirSync(uploadFolder, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadFolder),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, `report-${uniqueSuffix}${ext}`);
-  },
-});
-const upload = multer({ storage });
-
-// ==========================
-// Orthanc: Get Studies
-// ==========================
+/* ======================================================
+   GET STUDIES FROM ORTHANC
+====================================================== */
 app.get("/api/studies", async (req, res) => {
   try {
     const { data: studyIds } = await axios.get(`${ORTHANC_URL}studies`, { auth: ORTHANC_AUTH });
@@ -74,18 +62,15 @@ app.get("/api/studies", async (req, res) => {
         const { data: study } = await axios.get(`${ORTHANC_URL}studies/${id}`, { auth: ORTHANC_AUTH });
         const patientName = study.PatientMainDicomTags?.PatientName || "N/A";
         const sexRaw = study.PatientMainDicomTags?.PatientSex || "O";
-        let patientSex = sexRaw === "M" ? "Male" : sexRaw === "F" ? "Female" : "Other";
+        const patientSex = sexRaw === "M" ? "Male" : sexRaw === "F" ? "Female" : "Other";
 
-        let seriesCount = 0;
-        let instancesCount = 0;
-        let modality = "N/A";
+        let seriesCount = 0, instancesCount = 0, modality = "N/A";
 
         if (study.Series?.length > 0) {
           seriesCount = study.Series.length;
           const seriesInfo = await Promise.all(
-            study.Series.map((sid) => axios.get(`${ORTHANC_URL}series/${sid}`, { auth: ORTHANC_AUTH }))
+            study.Series.map(sid => axios.get(`${ORTHANC_URL}series/${sid}`, { auth: ORTHANC_AUTH }))
           );
-
           modality = seriesInfo[0]?.data?.MainDicomTags?.Modality || study.MainDicomTags?.Modality || "N/A";
           instancesCount = seriesInfo.reduce((sum, s) => sum + (s.data?.Instances?.length || 0), 0);
         }
@@ -115,15 +100,16 @@ app.get("/api/studies", async (req, res) => {
   }
 });
 
-// ==========================
-// MWL Endpoints
-// ==========================
-
+/* ======================================================
+   MWL ROUTES
+====================================================== */
 // Add MWL
 app.post("/api/mwl", async (req, res) => {
   try {
     const entry = req.body;
-    if (!entry.PatientName || !entry.Modality) return res.status(400).json({ error: "Missing required fields" });
+    if (!entry.PatientName || !entry.Modality) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
     const result = await pool.query(
       `INSERT INTO mwl
@@ -193,6 +179,7 @@ app.put("/api/mwl/:id", async (req, res) => {
         req.params.id,
       ]
     );
+
     if (result.rowCount === 0) return res.status(404).json({ error: "MWL entry not found" });
     res.json({ message: "MWL updated", entry: result.rows[0] });
   } catch (err) {
@@ -201,15 +188,17 @@ app.put("/api/mwl/:id", async (req, res) => {
   }
 });
 
-// Send MWL to modality
+/* ======================================================
+   SEND MWL ENTRY TO MODALITY
+====================================================== */
 app.post("/api/mwl/:id/send", async (req, res) => {
   try {
     let { modality, orthancModalityName } = req.body;
     const result = await pool.query("SELECT * FROM mwl WHERE id=$1", [req.params.id]);
     if (result.rowCount === 0) return res.status(404).json({ error: "MWL entry not found" });
-    const entry = result.rows[0];
 
-    if (!modality) modality = entry.Modality;
+    const entry = result.rows[0];
+    modality = modality || entry.Modality;
     if (!modality && !orthancModalityName) return res.status(400).json({ error: "No modality available to send" });
 
     const MODALITY_MAP = { CT: "CT_PACS", MR: "MR_PACS", US: "US_PACS", CR: "CR_PACS", DX: "XRAY_PACS" };
@@ -241,92 +230,195 @@ app.post("/api/mwl/:id/send", async (req, res) => {
   }
 });
 
-// ==========================
-// Report Endpoints
-// ==========================
-
-// Get report by studyUID
-app.get("/api/reports/:studyUID", async (req, res) => {
-  const { studyUID } = req.params;
+/* ======================================================
+   GET STUDY DETAILS BY UID
+====================================================== */
+app.get("/api/studies/:uid", async (req, res) => {
   try {
-    const reportRes = await pool.query("SELECT * FROM reports WHERE study_uid = $1", [studyUID]);
-    if (reportRes.rows.length === 0) return res.json(null);
+    const uid = req.params.uid;
+    const find = await axios.post(`${ORTHANC_URL}tools/find`, { Level: "Study", Query: { StudyInstanceUID: uid } }, { auth: ORTHANC_AUTH });
+    if (!find.data?.length) return res.json({ message: "No study found" });
 
-    const report = reportRes.rows[0];
-    const imagesRes = await pool.query("SELECT * FROM report_images WHERE report_id = $1 ORDER BY sort_order ASC", [report.id]);
-    report.key_images = imagesRes.rows;
+    const studyId = find.data[0];
+    const study = await axios.get(`${ORTHANC_URL}studies/${studyId}`, { auth: ORTHANC_AUTH });
+    const s = study.data;
 
-    res.json(report);
+    let modality = "", bodyPart = "";
+    if (s.Series?.length) {
+      const series = await axios.get(`${ORTHANC_URL}series/${s.Series[0]}`, { auth: ORTHANC_AUTH });
+      modality = series.data.MainDicomTags.Modality || "";
+      bodyPart = series.data.MainDicomTags.BodyPartExamined || "";
+    }
+
+    res.json({
+      PatientID: s.PatientMainDicomTags.PatientID,
+      PatientName: s.PatientMainDicomTags.PatientName,
+      PatientSex: s.PatientMainDicomTags.PatientSex,
+      PatientAge: s.PatientMainDicomTags.PatientAge,
+      StudyInstanceUID: uid,
+      StudyDate: s.MainDicomTags.StudyDate,
+      StudyTime: s.MainDicomTags.StudyTime,
+      AccessionNumber: s.MainDicomTags.AccessionNumber,
+      StudyDescription: s.MainDicomTags.StudyDescription,
+      Modality: modality,
+      BodyPartExamined: bodyPart,
+      History: "", Findings: "", Conclusion: "",
+    });
   } catch (err) {
-    console.error("Fetch report error:", err.message);
-    res.status(500).json({ error: "Failed to load report" });
+    console.error("Fetch study error:", err.message);
+    res.status(500).json({ error: "Failed to load study" });
   }
 });
 
-// Save report
-app.post("/api/reports/save", async (req, res) => {
-  const { studyUID, reportContent, reportedBy, approvedBy, status } = req.body;
+/* ======================================================
+   GET ALL REPORTS (FOR DASHBOARD / TABLE)
+====================================================== */
+app.get("/api/reports", async (req, res) => {
   try {
-    const reportRes = await pool.query(
-      `INSERT INTO reports (study_uid, report_content, reported_by, approved_by, status)
-       VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (study_uid)
-       DO UPDATE SET
-         report_content = EXCLUDED.report_content,
-         reported_by = EXCLUDED.reported_by,
-         approved_by = EXCLUDED.approved_by,
-         status = EXCLUDED.status
-       RETURNING id`,
-      [studyUID, reportContent, reportedBy, approvedBy, status]
+    const result = await pool.query(`
+      SELECT
+        r.id,
+        r.study_uid,
+        r.accession_number,
+        r.patient_id,
+        r.patient_name,
+        r.modality,
+        r.status,
+        r.created_at
+      FROM reports r
+      ORDER BY r.created_at DESC
+    `);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch reports error:", err.message);
+    res.status(500).json({ error: "Failed to load reports" });
+  }
+});
+
+/* ======================================================
+   REPORT IMAGE UPLOAD  (FIXED)
+====================================================== */
+const reportImagesDir = path.join(__dirname, "uploads/report_images");
+if (!fs.existsSync(reportImagesDir)) {
+  fs.mkdirSync(reportImagesDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, reportImagesDir);
+  },
+
+  filename: (req, file, cb) => {
+    const studyUID = req.body.studyUID;
+    if (!studyUID) {
+      return cb(new Error("studyUID is required"));
+    }
+
+    const ext = path.extname(file.originalname) || ".jpg";
+
+    // find existing images for same studyUID
+    const existingFiles = fs
+      .readdirSync(reportImagesDir)
+      .filter(f => f.startsWith(studyUID));
+
+    const suffix = existingFiles.length
+      ? `_${existingFiles.length + 1}`
+      : "";
+
+    cb(null, `${studyUID}${suffix}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
+
+app.post("/api/reports/upload", upload.array("images", 10), (req, res) => {
+  try {
+    const paths = req.files.map(
+      f => `/uploads/report_images/${f.filename}`
+    );
+    res.json({ success: true, paths });
+  } catch (err) {
+    console.error("Upload error:", err.message);
+    res.status(500).json({ success: false });
+  }
+});
+
+/* ======================================================
+   SAVE OR UPDATE REPORT
+====================================================== */
+app.post("/api/reports/save", async (req, res) => {
+  try {
+    const { study_uid, accession_number, patient_id, patient_name, modality,
+      reported_by, approved_by, status, history, findings, conclusion, image_paths } = req.body;
+
+    const reportContent = { history, findings, conclusion };
+
+    const reportResult = await pool.query(
+      `
+      INSERT INTO reports (
+        study_uid, accession_number, patient_id, patient_name,
+        modality, report_content, reported_by, approved_by, status
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (study_uid)
+      DO UPDATE SET
+        report_content = EXCLUDED.report_content,
+        reported_by = EXCLUDED.reported_by,
+        approved_by = EXCLUDED.approved_by,
+        status = EXCLUDED.status
+      RETURNING id
+      `,
+      [study_uid, accession_number, patient_id, patient_name, modality, reportContent, reported_by, approved_by, status || "Draft"]
     );
 
-    res.json({ success: true, reportId: reportRes.rows[0].id });
+    const reportId = reportResult.rows[0].id;
+
+    if (Array.isArray(image_paths) && image_paths.length) {
+      await pool.query("DELETE FROM report_images WHERE report_id=$1", [reportId]);
+      for (let i = 0; i < image_paths.length; i++) {
+        await pool.query(
+          `INSERT INTO report_images (report_id, image_path, sort_order) VALUES ($1,$2,$3)`,
+          [reportId, image_paths[i], i + 1]
+        );
+      }
+    }
+
+    res.json({ success: true, reportId });
   } catch (err) {
     console.error("Save report error:", err.message);
     res.status(500).json({ error: "Failed to save report" });
   }
 });
 
-// Upload report images
-app.post("/api/reports/upload-images/:reportId", upload.array("images"), async (req, res) => {
-  const { reportId } = req.params;
+/* ======================================================
+   GET REPORT BY STUDY UID
+====================================================== */
+app.get("/api/reports/by-study/:uid", async (req, res) => {
   try {
-    if (!req.files || req.files.length === 0) return res.status(400).json({ error: "No files uploaded" });
+    const { uid } = req.params;
+    const reportRes = await pool.query("SELECT * FROM reports WHERE study_uid=$1", [uid]);
+    if (!reportRes.rows.length) return res.json(null);
 
-    const insertPromises = req.files.map((file, index) =>
-      pool.query(
-        `INSERT INTO report_images (report_id, image_path, image_type, sort_order)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
-        [reportId, `/${file.path}`, "KEY", index + 1]
-      )
+    const report = reportRes.rows[0];
+    const imagesRes = await pool.query(
+      `SELECT image_path, image_type, sort_order
+       FROM report_images
+       WHERE report_id=$1
+       ORDER BY sort_order`,
+      [report.id]
     );
 
-    const insertedImages = await Promise.all(insertPromises);
-    res.json({ success: true, images: insertedImages.map((r) => r.rows[0]) });
+    res.json({ ...report, report_content: report.report_content, images: imagesRes.rows });
   } catch (err) {
-    console.error("Upload images error:", err.message);
-    res.status(500).json({ error: "Failed to upload images" });
+    console.error("Fetch report error:", err.message);
+    res.status(500).json({ error: "Failed to load report" });
   }
 });
 
-// Delete report image
-app.delete("/api/reports/image/:id", async (req, res) => {
-  const { id } = req.params;
-  try {
-    const imgRes = await pool.query("DELETE FROM report_images WHERE id = $1 RETURNING *", [id]);
-    if (imgRes.rowCount === 0) return res.status(404).json({ error: "Image not found" });
-
-    const filePath = imgRes.rows[0].image_path.replace(/^\//, "");
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
-    res.json({ success: true, deleted: imgRes.rows[0] });
-  } catch (err) {
-    console.error("Delete image error:", err.message);
-    res.status(500).json({ error: "Failed to delete image" });
-  }
+/* ======================================================
+   START SERVER
+====================================================== */
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
-
-// ==========================
-// Start Server
-// ==========================
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
