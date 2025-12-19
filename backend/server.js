@@ -462,18 +462,19 @@ app.get("/api/body-parts", async (req, res) => {
   }
 });
 
-/* ======================================================
-   REPORT TEMPLATES ROUTES
-====================================================== */
+// ========================
+// REPORT TEMPLATES ROUTES
+// ========================
+
 // Get all templates
 app.get("/api/report-templates", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM report_templates ORDER BY id DESC");
 
-    // Parse content JSON before sending
+    // Parse JSON content for frontend
     const templates = result.rows.map(t => ({
       ...t,
-      content: t.content ? JSON.parse(t.content) : { findings: "", conclusion: "" },
+      content: t.content ? t.content : { findings: "", conclusion: "" },
     }));
 
     res.json(templates);
@@ -483,35 +484,108 @@ app.get("/api/report-templates", async (req, res) => {
   }
 });
 
-// Add new template
+// Get template by ID
+app.get("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("SELECT * FROM report_templates WHERE id=$1", [id]);
+    if (!result.rows.length) return res.status(404).json({ error: "Template not found" });
+
+    const template = result.rows[0];
+    template.content = template.content ? template.content : { findings: "", conclusion: "" };
+
+    res.json(template);
+  } catch (err) {
+    console.error("Fetch template error:", err.message);
+    res.status(500).json({ error: "Failed to fetch template" });
+  }
+});
+
+// Add or update template
 app.post("/api/report-templates", async (req, res) => {
   try {
-    let { template_name, modality, body_part, template_type, content } = req.body;
+    let { template_name, modality, body_part, template_type, content, created_by, created_by_role } = req.body;
 
-    if (!modality || !body_part || !template_type || !content) {
-      return res.status(400).json({ error: "Missing required fields" });
+    if (!modality || !body_part || !content) {
+      return res.status(400).json({ error: "Missing required fields: modality, body_part, content" });
     }
 
-    // Auto-generate template_name if not provided
     if (!template_name || template_name.trim() === "") {
-      template_name = `${modality}_${body_part}_${template_type}`;
+      template_name = `${modality}_${body_part}_${template_type || "default"}`;
     }
 
     const result = await pool.query(
       `INSERT INTO report_templates
-       (modality, body_part, template_name, template_type, content, is_active, created_at)
-       VALUES ($1,$2,$3,$4,$5,true, NOW())
+       (modality, body_part, template_name, template_type, content, created_by, created_by_role)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (modality, body_part, template_name)
+       DO UPDATE SET content = EXCLUDED.content, template_type = EXCLUDED.template_type, updated_at = now()
        RETURNING *`,
-      [modality, body_part, template_name, template_type, JSON.stringify(content)]
+      [modality, body_part, template_name, template_type || null, JSON.stringify(content), created_by || null, created_by_role || null]
     );
 
-    const newTemplate = result.rows[0];
-    newTemplate.content = content; // return parsed JSON directly
+    const template = result.rows[0];
+    template.content = content; // return as object for frontend
 
-    res.json(newTemplate);
+    res.json(template);
   } catch (err) {
-    console.error("Add template error:", err.message);
-    res.status(500).json({ error: "Failed to add template" });
+    console.error("Add/update template error:", err.message);
+    res.status(500).json({ error: "Failed to add/update template" });
+  }
+});
+
+// Delete template by ID
+app.delete("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("DELETE FROM report_templates WHERE id=$1 RETURNING *", [id]);
+
+    if (result.rowCount === 0) return res.status(404).json({ error: "Template not found" });
+
+    res.json({ message: "Template deleted successfully", deleted: result.rows[0] });
+  } catch (err) {
+    console.error("Delete template error:", err.message);
+    res.status(500).json({ error: "Failed to delete template" });
+  }
+});
+
+app.put("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content, template_type } = req.body;
+
+    if (!content) {
+      return res.status(400).json({ error: "content is required" });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE report_templates
+      SET
+        content = $1::jsonb,
+        template_type = $2,
+        updated_at = NOW()
+      WHERE id = $3
+      RETURNING *
+      `,
+      [
+        JSON.stringify(content),
+        template_type || null,
+        id
+      ]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "Template not found" });
+    }
+
+    const updated = result.rows[0];
+    updated.content = content;
+
+    res.json(updated);
+  } catch (err) {
+    console.error("Update template error:", err.message);
+    res.status(500).json({ error: "Failed to update template" });
   }
 });
 

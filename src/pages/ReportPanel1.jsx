@@ -1,5 +1,4 @@
 // src/pages/ReportPanel.jsx 
-
 import React, { useEffect, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import html2canvas from "html2canvas";
@@ -7,10 +6,8 @@ import { jsPDF } from "jspdf";
 import "./ReportPanel.css";
 
 /* ===========================
-   RichEditor: sends its DOM node onFocus and calls onSelectionChange
-   so parent can track active editor + selection range
-   ... (RichEditor component remains unchanged) ...
-=========================== */
+      RichEditor component
+   ========================== */
 function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }) {
   const ref = useRef();
 
@@ -20,7 +17,6 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
     }
   }, [value]);
 
-  // Save selection when user selects inside editor
   const handleSelectionChange = () => {
     try {
       if (typeof onSelectionChange === "function") onSelectionChange();
@@ -34,7 +30,6 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
       suppressContentEditableWarning
       onFocus={() => {
         if (typeof onFocus === "function") onFocus(ref.current);
-        // small delay to allow browser selection to settle
         setTimeout(handleSelectionChange, 0);
       }}
       onInput={(e) => onChange(e.currentTarget.innerHTML)}
@@ -54,12 +49,7 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
     />
   );
 }
-
-/* ===========================
-   ReportTitle (small contentEditable)
-   ... (ReportTitle component remains unchanged) ...
-=========================== */
-function ReportTitle({ value, onChange }) {
+function ReportTitle({ value, onChange, onManualEdit }) {
   const ref = useRef();
 
   useEffect(() => {
@@ -74,7 +64,10 @@ function ReportTitle({ value, onChange }) {
       className="report-title"
       contentEditable
       suppressContentEditableWarning
-      onInput={(e) => onChange(e.currentTarget.innerText)}
+      onBlur={(e) => {
+        onChange(e.currentTarget.innerText);
+        onManualEdit(); // ✅ user finished typing
+      }}
       style={{
         fontWeight: "bold",
         fontSize: "14px",
@@ -85,11 +78,12 @@ function ReportTitle({ value, onChange }) {
   );
 }
 
+
 /* ===========================
-   Helpers
-   ... (Helper functions remain unchanged) ...
-=========================== */
+      Helper functions
+   ========================== */
 const cleanPatientName = (name) => (name ? name.replace(/\^/g, " ").trim() : "");
+
 const formatDicomDateTime = (date, time) => {
   if (!date || !time) return "";
   const d = date.trim();
@@ -100,6 +94,7 @@ const formatDicomDateTime = (date, time) => {
   )}T${t.substring(0, 2)}:${t.substring(2, 4)}:${t.substring(4, 6)}`;
   return new Date(iso).toLocaleString();
 };
+
 const formatDateTime = (date) => {
   try {
     return new Date(date).toLocaleString();
@@ -107,35 +102,78 @@ const formatDateTime = (date) => {
     return date;
   }
 };
+
 const extractAgeGender = (rawName, rawAge, rawSex) => {
   let name = rawName || "";
-  let age = rawAge || "";
-  let gender = rawSex || "";
+  let age = "";
+  let gender = "";
 
+  // 1️⃣ DICOM style parsing (^ separated)
   if (name.includes("^")) {
-    name = name
-      .split("^")
-      .filter((n) => n && !n.match(/\d{1,3}Y/i) && !n.match(/[MF]/i))
-      .join(" ")
-      .trim();
-  } else {
-    name = name.replace(/\d{1,3}\s*Y\/[MF]/i, "").trim();
+    const parts = name.split("^").map(p => p.trim());
+    const nameParts = [];
+
+    for (const p of parts) {
+      // Match age/gender like 27Y/F
+      const agMatch = p.match(/^(\d{1,3})Y?\/([MFO])$/i);
+      if (agMatch) {
+        age = agMatch[1];
+        gender = agMatch[2].toUpperCase();
+        continue;
+      }
+
+      // Match age only like 27Y
+      const ageMatch = p.match(/^(\d{1,3})Y$/i);
+      if (ageMatch) {
+        age = ageMatch[1];
+        continue;
+      }
+
+      // Match gender only like M/F/O
+      const genderMatch = p.match(/^([MFO])$/i);
+      if (genderMatch) {
+        gender = genderMatch[1].toUpperCase();
+        continue;
+      }
+
+      // Otherwise, part of name
+      nameParts.push(p);
+    }
+
+    name = nameParts.join(" ").trim();
   }
 
-  const ageMatch = rawName?.match(/(\d{1,3}\s*(Y|M|Months))/i);
-  if (ageMatch) age = ageMatch[1];
+  // 2️⃣ Plain text parsing for formats like "NAME 24Y/M"
+  if (!age || !gender) {
+    const plainMatch = name.match(/(\d{1,3})Y?\/([MFO])/i);
+    if (plainMatch) {
+      age = age || plainMatch[1];
+      gender = gender || plainMatch[2].toUpperCase();
+      name = name.replace(plainMatch[0], "").trim();
+    }
+  }
 
-  const genderMatch = rawName?.match(/\/([MF])/i);
-  if (genderMatch) gender = genderMatch[1].toUpperCase();
+  // 3️⃣ Fallback to rawAge/rawSex fields
+  if (!age && rawAge) age = rawAge;
+  if (!gender && rawSex && rawSex !== "O") gender = rawSex;
 
-  if (!age) age = "N/A";
-  if (!gender) gender = "N/A";
+  // 4️⃣ Final clean name
+  name = name.replace(/\^/g, " ").replace(/\s+/g, " ").trim();
+  if (!name) name = "N/A";
 
-  return { name, age, gender };
+  // Return standardized object
+  return {
+    name,
+    age: age || "N/A",
+    gender: gender || "N/A",
+  };
 };
-// Removed document.getElementById/querySelector dependent functions (updateArrowPosition)
-// as they are not used and assume elements outside of the component.
 
+
+
+/* ===========================
+      WordColorPicker
+   ========================== */
 function WordColorPicker({ onSelect }) {
   const automaticColor = "#000000";
 
@@ -162,8 +200,16 @@ function WordColorPicker({ onSelect }) {
   ];
 
   return (
-    
-    <div className="word-color-menu" style={{ padding: 8, background: "#fff", border: "1px solid #ccc", borderRadius: 6, boxShadow: "0 2px 6px rgba(0,0,0,0.12)" }}>
+    <div
+      className="word-color-menu"
+      style={{
+        padding: 8,
+        background: "#fff",
+        border: "1px solid #ccc",
+        borderRadius: 6,
+        boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+      }}
+    >
       <div
         className="color-option automatic"
         onMouseDown={(e) => e.preventDefault()}
@@ -219,8 +265,8 @@ function WordColorPicker({ onSelect }) {
 }
 
 /* ===========================
-   Main CreateReport component
-   =========================== */
+      Main CreateReport component
+   ========================== */
 export default function CreateReport() {
   const [searchParams] = useSearchParams();
   const studyUID = searchParams.get("study");
@@ -240,11 +286,11 @@ export default function CreateReport() {
     History: "",
     Findings: "",
     Conclusion: "",
-    ReportedBy: "", // Assuming these might be saved with the report
+    ReportedBy: "",
     ApprovedBy: "",
-    ReportStatus: "Draft", // Initialize with the current status (Draft if new)
+    ReportStatus: "",
   };
-
+  const [isLoadingReport, setIsLoadingReport] = useState(true);
   const [study, setStudy] = useState(defaultStudy);
   const [history, setHistory] = useState("");
   const [findings, setFindings] = useState("");
@@ -253,174 +299,256 @@ export default function CreateReport() {
   const [showKeyImages, setShowKeyImages] = useState(false);
   const [reportTitle, setReportTitle] = useState("CT REPORT");
   const [loading, setLoading] = useState(true);
-  const [viewerMinimized, setViewerMinimized] = useState(false);
-  const [reportMinimized, setReportMinimized] = useState(false);
-
   const reportRef = useRef(null);
   const fileInputRef = useRef(null);
-  
-  // Ref for footer contentEditable fields
   const reportedByRef = useRef(null);
   const approvedByRef = useRef(null);
-
-
-  // NEW: track active editor DOM node and saved selection range
-  const activeEditorRef = useRef(null); // DOM node of last focused editor
-  const savedRangeRef = useRef(null); // Last selection Range object
-
-  // color palette visibility
+  const activeEditorRef = useRef(null);
+  const savedRangeRef = useRef(null);
   const [showColorPalette, setShowColorPalette] = useState(false);
+  const refDoctorRef = useRef(null);
+  const bodyPartRef = useRef(null);
+  const [isManualTitle, setIsManualTitle] = useState(false);
+  const [editRefDoctor, setEditRefDoctor] = useState(false);
+  const [editBodyPart, setEditBodyPart] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
-  const endpoints = [
-    // ... (API endpoints for fetching study data)
-    (u) => `/api/studies/${u}`,
-    (u) => `/api/study/${u}`,
-    (u) => `/studies/${u}`,
-    (u) => `/api/studies?id=${u}`,
-    (u) => `http://localhost:5000/api/studies/${u}`,
-    (u) => `http://localhost:5000/api/study/${u}`,
-  ];
+useEffect(() => {
+  if (!study.Modality || !study.BodyPartExamined) return;
 
-  useEffect(() => {
-    if (!studyUID) {
-      setLoading(false);
-      return;
-    }
-    const load = async () => {
-      setLoading(true);
-      let got = null;
-      for (const fn of endpoints) {
-        try {
-          const url = fn(encodeURIComponent(studyUID));
-          const res = await fetch(url);
-          if (!res.ok) continue;
-          const data = await res.json();
-          got = Array.isArray(data) ? data[0] : data;
-          if (got) break;
-        } catch (e) {}
-      }
-      if (!got) {
-        setLoading(false);
-        return;
-      }
-      // Load fetched data and existing report content/status
-      setStudy({ ...defaultStudy, ...got });
-      setHistory(got.History || "");
-      setFindings(got.Findings || "");
-      setConclusion(got.Conclusion || "");
-      
-      // Load current status if available from the backend
-      if (got.ReportStatus) {
-        setStudy(prev => ({...prev, ReportStatus: got.ReportStatus}));
-      }
+  fetch("http://localhost:5000/api/report-templates")
+    .then(res => res.json())
+    .then(data => {
+      const filtered = data.filter(t =>
+        t.modality === study.Modality &&
+        t.body_part.toLowerCase() === study.BodyPartExamined.toLowerCase() &&
+        t.is_active
+      );
+      setTemplates(filtered);
+    })
+    .catch(err => console.error("Template load error", err));
+}, [study.Modality, study.BodyPartExamined]);
 
-      const m = (got.Modality || "").toUpperCase();
-      const b = (got.BodyPartExamined || "").toUpperCase();
-      setReportTitle(`${m} ${b} REPORT`.trim());
-      setLoading(false);
-    };
-    load();
-    // eslint-disable-next-line
-  }, [studyUID]);
+const applyTemplate = (template) => {
+  if (!template?.content) return;
 
-  /* ==============
-     File handlers
-     ============== */
-  const handleFiles = (files) =>
-    [...files]
-      .filter((f) => f.type.startsWith("image/"))
-      .forEach((f) => {
-        const r = new FileReader();
-        r.onload = (e) => setKeyImages((p) => [...p, e.target.result]);
-        r.readAsDataURL(f);
-      });
-
-  const clearImages = () => window.confirm("Clear all key images?") && setKeyImages([]);
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    if (e.dataTransfer.files) handleFiles(e.dataTransfer.files);
-  };
-
- const handleSaveReport = async (status) => {
-  if (!studyUID) {
-    alert("Cannot save report: Study UID is missing.");
-    return;
+  if (template.content.history) {
+    setHistory(template.content.history);
   }
 
-  // Ensure report_content is valid JSON object
-  let content = {
-    ReportTitle: reportTitle || "",
-    History: history || "",
-    Findings: findings || "",
-    Conclusion: conclusion || "",
+  if (template.content.findings) {
+    setFindings(template.content.findings);
+  }
+
+  if (template.content.conclusion) {
+    setConclusion(template.content.conclusion);
+  }
+
+  alert(`Template applied: ${template.template_name}`);
+  setShowTemplateMenu(false);
+};
+
+
+useEffect(() => {
+  if (refDoctorRef.current && refDoctorRef.current.innerText !== study.ReferringPhysicianName) {
+    refDoctorRef.current.innerText = study.ReferringPhysicianName || "";
+  }
+}, [study.ReferringPhysicianName]);
+
+useEffect(() => {
+  if (reportedByRef.current && reportedByRef.current.textContent !== study.ReportedBy) {
+    reportedByRef.current.textContent = study.ReportedBy || "";
+  }
+}, [study.ReportedBy]);
+
+// Sync ApprovedBy span after study state changes
+useEffect(() => {
+  if (approvedByRef.current && approvedByRef.current.textContent !== study.ApprovedBy) {
+    approvedByRef.current.textContent = study.ApprovedBy || "";
+  }
+}, [study.ApprovedBy]);
+
+  /* ===========================
+        Load report and prefill
+     ========================== */
+ useEffect(() => {
+  if (!studyUID) return;
+
+  const loadStudyAndReport = async () => {
+    try {
+      // 1️⃣ Load study info
+      const studyRes = await fetch(`http://localhost:5000/api/studies/${studyUID}`);
+      const studyData = (await studyRes.json()) || {};
+
+      // 2️⃣ Load report (draft/final)
+      const reportRes = await fetch(`/api/reports/by-study/${studyUID}`);
+      let reportData = null;
+      if (reportRes.ok) {
+        try {
+          reportData = await reportRes.json();
+        } catch {
+          reportData = null;
+        }
+      }
+
+      const reportContent = reportData?.report_content || {};
+
+      // 3️⃣ Update state
+      setStudy({
+        PatientName: studyData.PatientName || studyData.patient_name || "",
+        PatientAge: studyData.PatientAge || studyData.patient_age || "",
+        PatientSex: studyData.PatientSex || studyData.patient_sex || "",
+        PatientID: studyData.PatientID || studyData.patient_id || "",
+        AccessionNumber: studyData.AccessionNumber || studyData.accession_number || "",
+        Modality: studyData.Modality || studyData.modality || "",
+        StudyDate: studyData.StudyDate || studyData.study_date || "",
+        StudyTime: studyData.StudyTime || studyData.study_time || "",
+        ReferringPhysicianName: reportData?.referring_doctor || studyData.ReferringPhysicianName || studyData.referring_physician || "",
+        BodyPartExamined: reportData?.body_part || studyData.BodyPartExamined || studyData.body_part || "",
+        ReportedBy: reportData?.reported_by || "",
+        ApprovedBy: reportData?.approved_by || "",
+        ReportStatus: reportData?.status || "",
+      });
+      setIsLoadingReport(false);
+
+      setHistory(reportContent.history || "");
+      setFindings(reportContent.findings || "");
+      setConclusion(reportContent.conclusion || "");
+
+      // 4️⃣ Load key images if present
+      if (Array.isArray(reportData?.images) && reportData.images.length > 0) {
+        const loadedImages = reportData.images.map(img =>
+          img.image_path.startsWith("http") ? img.image_path : `http://localhost:5000${img.image_path}`
+        );
+        setKeyImages(loadedImages);
+        setShowKeyImages(true);
+      } else {
+        setKeyImages([]);
+        setShowKeyImages(false);
+      }
+
+    } catch (err) {
+      console.error("Failed to load study/report", err);
+
+      // fallback to empty/defaults
+      setStudy(prev => ({
+        ...prev,
+        ReportStatus: "Draft",
+        ReportedBy: prev.ReportedBy || "",
+        ApprovedBy: prev.ApprovedBy || "",
+      }));
+      setReportTitle("CT REPORT");
+      setHistory("");
+      setFindings("");
+      setConclusion("");
+      setKeyImages([]);
+      setShowKeyImages(false);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const reportData = {
-    patient_id: study.PatientID || "",
-    patient_name: study.PatientName || "",
-    modality: study.Modality || "",
-    report_content: content,
-    key_images: Array.isArray(keyImages) ? keyImages : [],
-    reported_by: reportedByRef.current?.innerText || study.ReportedBy || "",
-    approved_by: approvedByRef.current?.innerText || study.ApprovedBy || "",
-  };
+  loadStudyAndReport();
+}, [studyUID]);
+
+useEffect(() => {
+  if (isLoadingReport) return;        // 🔴 STOP during load
+  if (isManualTitle) return;
+
+  const modality = study.Modality?.trim();
+  const bodyPart = study.BodyPartExamined?.trim();
+
+  if (!modality) return;
+
+  const title = `${modality}${bodyPart ? " " + bodyPart : ""} REPORT`;
+  setReportTitle(title);
+}, [study.Modality, study.BodyPartExamined, isManualTitle, isLoadingReport]);
+
+
+  /* ===========================
+        Handle file uploads
+     ========================== */
+ const handleFiles = async (files) => {
+  const imageFiles = [...files].filter((f) => f.type.startsWith("image/"));
+  if (!imageFiles.length) return;
+
+  const formData = new FormData();
+
+  // 🔑 REQUIRED
+  formData.append("studyUID", studyUID);
+
+  imageFiles.forEach((f) => formData.append("images", f));
 
   try {
-    let response;
-    if (status === "Draft") {
-      if (study.reportId) {
-        response = await fetch(`/api/reports/draft/${study.reportId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reportData),
-        });
-      } else {
-        response = await fetch("/api/reports/draft", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(reportData),
-        });
-      }
-    } else if (status === "Final") {
-      if (!study.reportId) {
-        alert("Cannot finalize: Save draft first.");
-        return;
-      }
-      response = await fetch(`/api/reports/finalize/${study.reportId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved_by: reportData.approved_by }),
-      });
+    const res = await fetch("/api/reports/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+      setKeyImages((prev) => [
+        ...prev,
+        ...data.paths.map(
+          (p) => `http://localhost:5000${p}`
+        ),
+      ]);
+       
     }
-
-    if (!response.ok) throw new Error("Failed to save report");
-
-    const result = await response.json();
-
-    // Update state with reportId & status
-    setStudy((prev) => ({
-      ...prev,
-      ReportStatus: status,
-      reportId: status === "Draft" ? result.draft?.id || prev.reportId : prev.reportId,
-    }));
-
-    alert(`Report saved successfully as ${status}!`);
-    navigate("/reporting", { replace: true, state: { reportSaved: true } });
   } catch (err) {
-    console.error("Error saving report:", err);
-    alert(`Failed to save report as ${status}.`);
+    console.error("Image upload failed", err);
+    alert("Failed to upload images");
   }
 };
 
 
-  /* ==============
-     PDF export
-     ... (savePDF function remains unchanged) ...
-     ============== */
+  /* ===========================
+        Save report (Draft / Final)
+     ========================== */
+const handleSaveReport = async (status) => {
+  setStudy((prev) => ({ ...prev, ReportStatus: status })); // update immediately
+
+  const payload = {
+    study_uid: studyUID,
+    accession_number: study.AccessionNumber,
+    patient_id: study.PatientID,
+    patient_name: study.PatientName,
+    modality: study.Modality,
+    reported_by: study.ReportedBy,
+    approved_by: study.ApprovedBy,
+    status, // <- send current status to backend
+    history,
+    findings,
+    conclusion,
+    reportTitle,
+    referring_doctor: study.ReferringPhysicianName,
+    body_part: study.BodyPartExamined,
+    image_paths: keyImages.map((url) => url.replace("http://localhost:5000", "")),
+  };
+
+  try {
+    const res = await fetch("/api/reports/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.success) {
+      alert(`Report saved as ${status}`);
+    }
+  } catch (err) {
+    console.error("Save report error", err);
+    alert("Failed to save report");
+  }
+};
+
+  /* ===========================
+        PDF export
+     ========================== */
   const savePDF = async () => {
     if (!reportRef.current) return;
-
     const el = reportRef.current;
     const origHeight = el.style.height;
     const origOverflow = el.style.overflow;
@@ -620,15 +748,72 @@ export default function CreateReport() {
                 {t.icon}
               </button>
             ))}
+<div style={{ position: "relative" }}>
+  <button
+    type="button"
+    className="template-btn"
+    style={{ height: 28 }}
+    onClick={() => setShowTemplateMenu(s => !s)}
+  >
+    Templates ▼
+  </button>
+
+  {showTemplateMenu && (
+    <div
+      style={{
+        position: "absolute",
+        top: 34,
+        left: 0,
+        background: "#fff",
+        border: "1px solid #ccc",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+        borderRadius: 6,
+        width: 260,
+        zIndex: 1000,
+        maxHeight: 250,
+        overflowY: "auto",
+      }}
+    >
+      {templates.length === 0 ? (
+        <div style={{ padding: 10, fontSize: 12, color: "#777" }}>
+          No templates for {study.Modality} / {study.BodyPartExamined}
+        </div>
+      ) : (
+        templates.map(t => (
+          <div
+            key={t.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "8px 10px",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            <span style={{ fontSize: 12 }}>
+              {t.template_name}
+            </span>
 
             <button
-              type="button"
-              className="template-btn"
-              onClick={() => alert("Open template selector")}
-              style={{ height: 28 }}
+              title="Apply template"
+              onClick={() => applyTemplate(t)}
+              style={{
+                background: "#198754",
+                color: "#fff",
+                border: "none",
+                borderRadius: 4,
+                padding: "2px 8px",
+                cursor: "pointer",
+              }}
             >
-              + Template
+              +
             </button>
+          </div>
+        ))
+      )}
+    </div>
+  )}
+</div>
 
             <button
               type="button"
@@ -648,6 +833,8 @@ export default function CreateReport() {
               Key Images
             </button>
           </div>
+ <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ fontWeight: "bold" }}>Status = {study.ReportStatus || ""}</div>
 
           <div className="status-buttons" style={{ display: "flex", gap: 6 }}>
             {/* DRAFT BUTTON: Calls handleSaveReport with "Draft" status */}
@@ -660,16 +847,22 @@ export default function CreateReport() {
             </button>
             
             {/* FINAL BUTTON: Calls handleSaveReport with "Final" status */}
-            <button 
-              className="status-btn final" 
-              onClick={() => handleSaveReport("Final")}
-              style={{ padding: "6px 14px", borderRadius: 4, background: "#198754", color: "#fff" }}
-            >
-              Final
-            </button>
+           <button
+  onClick={() => handleSaveReport("Final")}
+  disabled={!study.ApprovedBy} // safe check
+  style={{
+    cursor: study.ApprovedBy ? "pointer" : "not-allowed",
+    background: study.ApprovedBy ? "#198754" : "#6c757d",
+  }}
+>
+  Final
+</button>
+
+
             
             <button className="status-btn close" onClick={() => navigate("/reporting")} style={{ padding: "6px 14px", borderRadius: 4, background: "#dc3545", color: "#fff" }}>X</button>
           </div>
+        </div>
         </div>
 
         {/* Patient table */}
@@ -692,17 +885,30 @@ export default function CreateReport() {
                 <strong>Study Date/Time:</strong>{" "}
                 {formatDicomDateTime(study.StudyDate, study.StudyTime)}
               </td>
-              <td style={{ padding: 6, border: "1px solid #000" }}>
-                <strong>Ref. Doctor:</strong>{" "}
-                <span
-                  contentEditable
-                  suppressContentEditableWarning
-                  onInput={(e) => setStudy((prev) => ({ ...prev, ReferringPhysicianName: e.currentTarget?.textContent || "" }))}
-                  style={{ borderBottom: "1px dashed #aaa" }}
-                >
-                  {study.ReferringPhysicianName || ""}
-                </span>
-              </td>
+      <td style={{ padding: 6, border: "1px solid #000" }}>
+  <strong>Ref. Doctor:</strong>{" "}
+  {editRefDoctor ? (
+    <input
+      autoFocus
+      value={study.ReferringPhysicianName || ""}
+      onChange={(e) =>
+        setStudy((p) => ({ ...p, ReferringPhysicianName: e.target.value }))
+      }
+      onBlur={() => setEditRefDoctor(false)}
+      onKeyDown={(e) => e.key === "Enter" && setEditRefDoctor(false)}
+      style={{ width: "70%" }}
+    />
+  ) : (
+    <span
+      onClick={() => setEditRefDoctor(true)}
+      
+    >
+      {study.ReferringPhysicianName || "—"}
+    </span>
+  )}
+</td>
+
+
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Accession No:</strong> {study.AccessionNumber}
               </td>
@@ -715,22 +921,40 @@ export default function CreateReport() {
               <td style={{ padding: 6, border: "1px solid #000" }}>
                 <strong>Modality:</strong> {study.Modality}
               </td>
-              <td style={{ padding: 6, border: "1px solid #000" }}>
-                <strong>Body Part:</strong>{" "}
-                <span
-                  contentEditable
-                  suppressContentEditableWarning
-                  onInput={(e) => setStudy((prev) => ({ ...prev, BodyPartExamined: e.currentTarget?.textContent || "" }))}
-                  style={{ borderBottom: "1px dashed #aaa" }}
-                >
-                  {study.BodyPartExamined || ""}
-                </span>
-              </td>
+             <td style={{ padding: 6, border: "1px solid #000" }}>
+  <strong>Body Part:</strong>{" "}
+  {editBodyPart ? (
+    <input
+      autoFocus
+      value={study.BodyPartExamined || ""}
+      onChange={(e) =>
+        setStudy((p) => ({ ...p, BodyPartExamined: e.target.value }))
+      }
+      onBlur={() => setEditBodyPart(false)}
+      onKeyDown={(e) => e.key === "Enter" && setEditBodyPart(false)}
+      style={{ width: "70%" }}
+    />
+  ) : (
+    <span
+      onClick={() => setEditBodyPart(true)}
+      
+    >
+      {study.BodyPartExamined || "—"}
+    </span>
+  )}
+</td>
             </tr>
           </tbody>
         </table>
 
-        <ReportTitle value={reportTitle} onChange={setReportTitle} />
+       <ReportTitle
+  value={reportTitle}
+  onChange={setReportTitle}
+  onManualEdit={() => setIsManualTitle(true)}
+/>
+
+
+
 
         {/* History */}
         <section className="section" style={{ marginBottom: 20 }}>
@@ -802,32 +1026,48 @@ export default function CreateReport() {
               }}
             >
               {keyImages.length === 0 && <div style={{ color: "#666" }}>Click to add images or drag & drop</div>}
-              {keyImages.map((src, i) => (
-                <div key={i} className="key-image-item" style={{ position: "relative", width: 120, height: 120 }}>
-                  <img src={src} alt={`ki-${i}`} style={{ width: "100%", height: "100%", objectFit: "contain", border: "1px solid #ddd", borderRadius: 6 }} />
-                  <button
-                    className="remove-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setKeyImages((prev) => prev.filter((_, idx) => idx !== i));
-                    }}
-                    style={{
-                      position: "absolute",
-                      top: 4,
-                      right: 4,
-                      background: "rgba(0,0,0,0.6)",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: 12,
-                      width: 22,
-                      height: 22,
-                      cursor: "pointer",
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+           {keyImages.map((src, i) => (
+  <div
+    key={i}
+    className="key-image-item"
+    style={{ position: "relative", width: 120, height: 120 }}
+  >
+   <img
+  src={src}
+  alt={`ki-${i}`}
+  style={{
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+  }}
+/>
+
+    <button
+      className="remove-btn"
+      onClick={(e) => {
+        e.stopPropagation();
+        setKeyImages((prev) => prev.filter((_, idx) => idx !== i));
+      }}
+      style={{
+        position: "absolute",
+        top: 4,
+        right: 4,
+        background: "rgba(0,0,0,0.6)",
+        color: "#fff",
+        border: "none",
+        borderRadius: "50%",
+        width: 22,
+        height: 22,
+        cursor: "pointer",
+      }}
+    >
+      ✕
+    </button>
+  </div>
+))}
+
             </div>
           </section>
         )}
@@ -844,18 +1084,42 @@ export default function CreateReport() {
           />
         </section>
 
-        <footer className="footer-row" style={{ display: "flex", justifyContent: "space-between", marginTop: 30 }}>
-          <div style={{ fontWeight: "bold", fontSize: 11 }}>
-            Reported By: <span ref={reportedByRef} contentEditable suppressContentEditableWarning style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}>
-              {study.ReportedBy}
-            </span>
-          </div>
-          <div style={{ fontWeight: "bold", fontSize: 11 }}>
-            Approved By: <span ref={approvedByRef} contentEditable suppressContentEditableWarning style={{ borderBottom: "1px solid #000", minWidth: 200, display: "inline-block", padding: "2px 5px" }}>
-              {study.ApprovedBy}
-            </span>
-          </div>
-        </footer>
+      <footer className="footer-row" style={{ display: "flex", justifyContent: "space-between", marginTop: 30 }}>
+  <div style={{ fontWeight: "bold", fontSize: 11 }}>
+    Reported By:
+    <span
+      contentEditable
+      suppressContentEditableWarning
+      onInput={(e) => setStudy(prev => ({ ...prev, ReportedBy: e.target.textContent || "" }))}
+      style={{
+        borderBottom: "1px solid #000",
+        minWidth: 200,
+        display: "inline-block",
+        padding: "2px 5px",
+      }}
+    >
+      {study.ReportedBy}
+    </span>
+  </div>
+
+  <div style={{ fontWeight: "bold", fontSize: 11 }}>
+    Approved By:
+    <span
+      contentEditable
+      suppressContentEditableWarning
+      onInput={(e) => setStudy(prev => ({ ...prev, ApprovedBy: e.target.textContent || "" }))}
+      style={{
+        borderBottom: "1px solid #000",
+        minWidth: 200,
+        display: "inline-block",
+        padding: "2px 5px",
+      }}
+    >
+      {study.ApprovedBy}
+    </span>
+  </div>
+</footer>
+
 
         <div className="buttons toolbar" style={{ marginTop: 12 }}>
           <button onClick={savePDF} style={{ padding: "8px 12px" }}>Save PDF</button>

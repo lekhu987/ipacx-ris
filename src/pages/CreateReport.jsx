@@ -314,6 +314,51 @@ const [reportMinimized, setReportMinimized] = useState(false);
 const [isManualTitle, setIsManualTitle] = useState(false);
 const [editRefDoctor, setEditRefDoctor] = useState(false);
 const [editBodyPart, setEditBodyPart] = useState(false);
+const [templates, setTemplates] = useState([]);
+const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+
+// template
+useEffect(() => {
+  if (!study.Modality || !study.BodyPartExamined) return;
+
+  fetch("http://localhost:5000/api/report-templates")
+    .then(res => res.json())
+    .then(data => {
+      const bodyPart = study.BodyPartExamined.trim().toLowerCase();
+      const modality = study.Modality.trim();
+
+      // 1️⃣ First look for exact "plain" template
+      const plainTemplate = data.filter(t =>
+        t.modality === modality &&
+        t.body_part.toLowerCase() === `${bodyPart}_plain` &&
+        t.is_active
+      );
+
+      // 2️⃣ If no "plain" template, fall back to normal template
+      const filtered = plainTemplate.length > 0
+        ? plainTemplate
+        : data.filter(t =>
+            t.modality === modality &&
+            t.body_part.toLowerCase() === bodyPart &&
+            t.is_active
+          );
+
+      setTemplates(filtered);
+    })
+    .catch(err => console.error("Template load error", err));
+}, [study.Modality, study.BodyPartExamined]);
+
+const applyTemplate = (template) => {
+  if (!template || !template.content) return;
+
+  // Apply history, findings, conclusion if present
+  if (template.content.history) setHistory(template.content.history);
+  if (template.content.findings) setFindings(template.content.findings);
+  if (template.content.conclusion) setConclusion(template.content.conclusion);
+
+  alert(`Template applied: ${template.template_name}`);
+  setShowTemplateMenu(false);
+};
 
 
   // Sync ReportedBy span after study state changes
@@ -755,14 +800,73 @@ const handleSaveReport = async (status) => {
               </button>
             ))}
 
+            <div style={{ position: "relative" }}>
+  <button
+    type="button"
+    className="template-btn"
+    style={{ height: 28 }}
+    onClick={() => setShowTemplateMenu(s => !s)}
+  >
+    Templates ▼
+  </button>
+
+  {showTemplateMenu && (
+    <div
+      style={{
+        position: "absolute",
+        top: 34,
+        left: 0,
+        background: "#fff",
+        border: "1px solid #ccc",
+        boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+        borderRadius: 6,
+        width: 260,
+        zIndex: 1000,
+        maxHeight: 250,
+        overflowY: "auto",
+      }}
+    >
+      {templates.length === 0 ? (
+        <div style={{ padding: 10, fontSize: 12, color: "#777" }}>
+          No templates for {study.Modality} / {study.BodyPartExamined}
+        </div>
+      ) : (
+        templates.map(t => (
+          <div
+            key={t.id}
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "8px 10px",
+              borderBottom: "1px solid #eee",
+            }}
+          >
+            <span style={{ fontSize: 12 }}>
+              {t.template_name}
+            </span>
+
             <button
-              type="button"
-              className="template-btn"
-              onClick={() => alert("Open template selector")}
-              style={{ height: 28 }}
+              title="Apply template"
+              onClick={() => applyTemplate(t)}
+              style={{
+                background: "#198754",
+                color: "#fff",
+                border: "none",
+                borderRadius: 4,
+                padding: "2px 8px",
+                cursor: "pointer",
+              }}
             >
-              + Template
+              +
             </button>
+          </div>
+        ))
+      )}
+    </div>
+  )}
+</div>
+
 
             <button
               type="button"

@@ -1,21 +1,8 @@
 /* src/pages/adminsettings/TemplateManagement.css */
-
-/* Container */
-.reporting-container {
-  max-width: 1200px;
-  margin: 20px auto;
-  padding: 20px;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f9f9f9;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-}
-
-/* Page title */
 .page-title {
-  font-size: 28px;
-  font-weight: 600;
-  margin-bottom: 20px;
+  font-size: 24px; 
+    margin-bottom: 12px; 
+    color: #333; 
   color: #333;
 }
 
@@ -175,4 +162,18 @@
     font-size: 13px;
     padding: 8px 10px;
   }
+}
+.edit-btn {
+  background-color: #22c55e;
+  color: #fff;
+  padding: 6px 12px;
+  font-size: 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+.edit-btn:hover {
+  background-color: #16a34a;
 }
