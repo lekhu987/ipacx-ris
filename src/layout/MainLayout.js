@@ -33,7 +33,7 @@ function MainLayout({ children }) {
         {showAdminMenu && (
           <div className="admin-submenu">
             <Link to="/admin/user-management">User Management</Link>
-            <Link to="/admin/report-management">Report Management</Link>
+            <Link to="/admin/templates">Template Management</Link>
             <Link to="/admin/pacs-management">PACS Management</Link>
             <Link to="/admin/mwls-management">MWLS Management</Link>
           </div>

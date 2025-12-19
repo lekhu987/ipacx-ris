@@ -432,6 +432,89 @@ app.get("/api/reports/by-study/:uid", async (req, res) => {
 });
 
 
+// Get all active modalities
+app.get("/api/modalities", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, code, name FROM modalities WHERE is_active = true ORDER BY id"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch modalities error:", err.message);
+    res.status(500).json({ error: "Failed to fetch modalities" });
+  }
+});
+
+// Get active body parts by modality_id
+app.get("/api/body-parts", async (req, res) => {
+  try {
+    const modality_id = req.query.modality_id;
+    if (!modality_id) return res.status(400).json({ error: "modality_id is required" });
+
+    const result = await pool.query(
+      "SELECT id, name FROM body_parts WHERE modality_id = $1 AND is_active = true ORDER BY id",
+      [modality_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch body parts error:", err.message);
+    res.status(500).json({ error: "Failed to fetch body parts" });
+  }
+});
+
+/* ======================================================
+   REPORT TEMPLATES ROUTES
+====================================================== */
+// Get all templates
+app.get("/api/report-templates", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM report_templates ORDER BY id DESC");
+
+    // Parse content JSON before sending
+    const templates = result.rows.map(t => ({
+      ...t,
+      content: t.content ? JSON.parse(t.content) : { findings: "", conclusion: "" },
+    }));
+
+    res.json(templates);
+  } catch (err) {
+    console.error("Fetch templates error:", err.message);
+    res.status(500).json({ error: "Failed to fetch templates" });
+  }
+});
+
+// Add new template
+app.post("/api/report-templates", async (req, res) => {
+  try {
+    let { template_name, modality, body_part, template_type, content } = req.body;
+
+    if (!modality || !body_part || !template_type || !content) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Auto-generate template_name if not provided
+    if (!template_name || template_name.trim() === "") {
+      template_name = `${modality}_${body_part}_${template_type}`;
+    }
+
+    const result = await pool.query(
+      `INSERT INTO report_templates
+       (modality, body_part, template_name, template_type, content, is_active, created_at)
+       VALUES ($1,$2,$3,$4,$5,true, NOW())
+       RETURNING *`,
+      [modality, body_part, template_name, template_type, JSON.stringify(content)]
+    );
+
+    const newTemplate = result.rows[0];
+    newTemplate.content = content; // return parsed JSON directly
+
+    res.json(newTemplate);
+  } catch (err) {
+    console.error("Add template error:", err.message);
+    res.status(500).json({ error: "Failed to add template" });
+  }
+});
+
 /* ======================================================
    START SERVER
 ====================================================== */

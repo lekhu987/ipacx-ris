@@ -11,9 +11,7 @@ import CreateReport from "./pages/CreateReport";
 import ReportingPage from "./pages/ReportingPage";
 import ReportPanelPage from "./pages/ReportPanel";  
 import MWLS from "./pages/MWLS";
-
-// Admin pages
-import ReportManagement from "./pages/adminsettings/ReportManagement";
+import TemplateManagement from "./pages/adminsettings/TemplateManagement";
 
 // Context
 import { StudiesProvider } from "./context/StudiesContext";
@@ -37,7 +35,10 @@ function App() {
           <Route path="/report-panel" element={<ReportPanelPage />} />
 
           {/* Admin settings routes */}
-          <Route path="/admin/report-management" element={<ReportManagement />} />
+          <Route
+  path="/admin/templates"
+  element={<TemplateManagement />}
+/>
           
           {/* Redirect unknown routes */}
           <Route path="*" element={<Navigate to="/scheduling" />} />

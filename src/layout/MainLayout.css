@@ -50,7 +50,7 @@
   /* FIX: Remove margin-left and use padding-left for a 10px indent (20px total) */
   margin-left: 0; 
   padding: 5px 10px 5px 20px; 
-  font-size: 14px;
+  font-size: 12px;
   display: block;
 }
 
