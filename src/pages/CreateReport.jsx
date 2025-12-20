@@ -894,7 +894,7 @@ const handleSaveReport = async (status) => {
             <button 
               className="status-btn draft" 
               onClick={() => handleSaveReport("Draft")}
-              style={{ padding: "6px 14px", borderRadius: 4, background: "#6c757d", color: "#fff" }}
+              style={{ padding: "6px 6px", borderRadius: 4, background: "#6c757d", color: "#fff" }}
             >
               Draft
             </button>
@@ -905,7 +905,7 @@ const handleSaveReport = async (status) => {
   disabled={!study.ApprovedBy} // safe check
   style={{
     cursor: study.ApprovedBy ? "pointer" : "not-allowed",
-    background: study.ApprovedBy ? "#198754" : "#6c757d",
+    background: study.ApprovedBy ? "#198754" : "#6c757d", padding: "6px 6px", borderRadius: 4,
   }}
 >
   Final
@@ -914,7 +914,7 @@ const handleSaveReport = async (status) => {
   className="status-btn close"
   onClick={() => navigate(-1)} // go back one step in history
   style={{
-    padding: "6px 14px",
+    padding: "6px 6px",
     borderRadius: 4,
     background: "#dc3545",
     color: "#fff"

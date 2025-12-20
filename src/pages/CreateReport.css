@@ -173,14 +173,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 5px;
   margin-bottom: 8px;
   white-space: nowrap;
 }
 
 .status-buttons {
   display: flex;
-  gap: 6px;
+  gap: 3px;
   flex-shrink: 0;
 }
 
@@ -453,7 +453,7 @@
     top: 0;
     height: 100%;
     width: 1px;
-    background: #000 !important;   /* forces the line */
+    background: #222121 !important;   /* forces the line */
     print-color-adjust: exact !important;
     -webkit-print-color-adjust: exact !important;
   }

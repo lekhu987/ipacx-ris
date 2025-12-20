@@ -3,190 +3,197 @@ import React, { useState, useEffect } from "react";
 import MainLayout from "../../layout/MainLayout";
 import "./TemplateManagement.css";
 
-const BACKEND_URL = "http://localhost:5000"; // your backend URL
+const BACKEND_URL = "http://localhost:5000";
 
 export default function TemplateManagement() {
   const activeMain = "Templates";
   const [activeSub, setActiveSub] = useState("View Templates");
   const [editingId, setEditingId] = useState(null);
+
   const [templates, setTemplates] = useState([]);
+
   const [templateName, setTemplateName] = useState("");
+  const [isTemplateNameManual, setIsTemplateNameManual] = useState(false);
+
   const [templateModality, setTemplateModality] = useState("");
   const [templateBody, setTemplateBody] = useState("");
-  const [templateType, setTemplateType] = useState("plain");
+  const [templateType, setTemplateType] = useState("");
+
+  const [History, setHistory] = useState("");
   const [findings, setFindings] = useState("");
   const [conclusion, setConclusion] = useState("");
-   const[History, setHistory] = useState("");
+
   const [modalities, setModalities] = useState([]);
   const [bodyParts, setBodyParts] = useState([]);
 
   const sections = { Templates: ["View Templates", "Add Template"] };
 
-  // Fetch modalities
+  /* ============================
+     FETCH EXISTING TEMPLATES
+  ============================ */
+  const fetchTemplates = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/report-templates`);
+      const data = await res.json();
+      setTemplates(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    fetchTemplates();
+  }, []);
+
+  /* ============================
+     FETCH MODALITIES
+  ============================ */
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/modalities`)
       .then(res => res.json())
       .then(data => setModalities(data))
-      .catch(err => console.error("Fetch modalities error:", err));
+      .catch(err => console.error(err));
   }, []);
 
-  // Fetch body parts based on modality
+  /* ============================
+     FETCH BODY PARTS
+  ============================ */
   useEffect(() => {
     if (!templateModality) {
       setBodyParts([]);
       return;
     }
-    const selectedModality = modalities.find(m => m.code === templateModality);
-    if (!selectedModality) return;
 
-    fetch(`${BACKEND_URL}/api/body-parts?modality_id=${selectedModality.id}`)
+    const selected = modalities.find(m => m.code === templateModality);
+    if (!selected) return;
+
+    fetch(`${BACKEND_URL}/api/body-parts?modality_id=${selected.id}`)
       .then(res => res.json())
       .then(data => setBodyParts(data))
-      .catch(err => console.error("Fetch body parts error:", err));
+      .catch(err => console.error(err));
   }, [templateModality, modalities]);
 
-  // Auto-generate template name
+  /* ============================
+     AUTO-GENERATE TEMPLATE NAME
+  ============================ */
   useEffect(() => {
-    if (templateModality && templateBody && templateType) {
-      setTemplateName(`${templateModality}_${templateBody}_${templateType}`);
-    } else {
-      setTemplateName("");
+    if (!isTemplateNameManual && templateModality && templateBody) {
+      const typePart = templateType ? `_${templateType}` : "";
+      setTemplateName(`${templateModality}_${templateBody}${typePart}`);
     }
-  }, [templateModality, templateBody, templateType]);
+  }, [templateModality, templateBody, templateType, isTemplateNameManual]);
 
-  // Fetch existing templates
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/api/report-templates`)
-      .then(res => res.json())
-      .then(data => setTemplates(data))
-      .catch(err => console.error("Fetch templates error:", err));
-  }, []);
-
-  // Default template
+  /* ============================
+     DEFAULT TEMPLATE
+  ============================ */
   const fillDefaultTemplate = () => {
-    setHistory("- Normal structure observed.");
-    setFindings("- Normal structure observed.\n- No abnormality detected.");
+    setHistory("- Normal clinical history.");
+    setFindings("- Normal study.\n- No abnormality detected.");
     setConclusion("- Within normal limits.");
   };
 
-  // Add template
+  /* ============================
+     ADD / UPDATE TEMPLATE
+  ============================ */
   const handleAddTemplate = async () => {
-  if (!templateModality || !templateBody || !templateType) {
-    alert("Please fill all required fields");
-    return;
-  }
-
-  const isEditMode = Boolean(editingId); // ✅ capture mode first
-
-  const generatedName = `${templateModality}_${templateBody}_${templateType}`;
-
-  const payload = {
-    template_name: generatedName,
-    modality: templateModality,
-    body_part: templateBody,
-    template_type: templateType,
-    content: {
-      history: History,
-      findings,
-      conclusion,
-    },
-  };
-
-  try {
-    const url = isEditMode
-      ? `${BACKEND_URL}/api/report-templates/${editingId}`
-      : `${BACKEND_URL}/api/report-templates`;
-
-    const method = isEditMode ? "PUT" : "POST";
-
-    const response = await fetch(url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("Server error:", text);
-      alert("Failed to save template");
+    if (!templateModality || !templateBody) {
+      alert("Please fill at least Modality and Body Part");
       return;
     }
 
-    const saved = await response.json();
+    const isEditMode = Boolean(editingId);
 
-    if (isEditMode) {
-      setTemplates(prev =>
-        prev.map(t => (t.id === editingId ? saved : t))
-      );
-      alert("Template updated successfully ");
-    } else {
-      setTemplates(prev => [saved, ...prev]);
-      alert("Template added successfully ");
-    }
-
-    //reset AFTER alert
-    setEditingId(null);
-    setTemplateModality("");
-    setTemplateBody("");
-    setTemplateType("plain");
-    setTemplateName("");
-    setHistory("");
-    setFindings("");
-    setConclusion("");
-    setActiveSub("View Templates");
-
-  } catch (err) {
-    console.error("Save template error:", err);
-    alert("Failed to save template");
-  }
-};
-
-
-  // Delete template
-  const deleteTemplate = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this template?")) return;
+    const payload = {
+      template_name: templateName.trim() || null,
+      modality: templateModality,
+      body_part: templateBody,
+      template_type: templateType || null,
+      content: {
+        history: History,
+        findings,
+        conclusion,
+      },
+    };
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/report-templates/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (res.ok) {
-        setTemplates(templates.filter(t => t.id !== id));
-        alert("Template deleted!");
-      } else {
-        alert(data.error || "Failed to delete template");
+      const url = isEditMode
+        ? `${BACKEND_URL}/api/report-templates/${editingId}`
+        : `${BACKEND_URL}/api/report-templates`;
+
+      const method = isEditMode ? "PUT" : "POST";
+
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        alert("Failed to save template");
+        return;
       }
+
+      // Always re-fetch templates
+      await fetchTemplates();
+
+      alert(isEditMode ? "Template updated successfully" : "Template added successfully");
+
+      // Reset form
+      setEditingId(null);
+      setTemplateModality("");
+      setTemplateBody("");
+      setTemplateType("");
+      setTemplateName("");
+      setIsTemplateNameManual(false);
+      setHistory("");
+      setFindings("");
+      setConclusion("");
+      setActiveSub("View Templates");
+
     } catch (err) {
-      console.error("Delete template error:", err);
-      alert("Failed to delete template");
+      console.error(err);
+      alert("Failed to save template");
     }
   };
-const handleEditTemplate = (template) => {
-  setEditingId(template.id);
 
-  setTemplateModality(template.modality);
-  setTemplateBody(template.body_part);
-  setTemplateType(template.template_type || "plain");
+  /* ============================
+     DELETE TEMPLATE
+  ============================ */
+  const deleteTemplate = async (id) => {
+    if (!window.confirm("Delete this template?")) return;
 
-  setTemplateName(template.template_name);
+    await fetch(`${BACKEND_URL}/api/report-templates/${id}`, {
+      method: "DELETE",
+    });
 
-  setHistory(template.content?.history || "");
-  setFindings(template.content?.findings || "");
-  setConclusion(template.content?.conclusion || "");
+    fetchTemplates(); // Re-fetch after delete
+  };
 
-  setActiveSub("Add Template");
-};
+  /* ============================
+     EDIT TEMPLATE
+  ============================ */
+  const handleEditTemplate = (template) => {
+    setEditingId(template.id);
+    setTemplateModality(template.modality);
+    setTemplateBody(template.body_part);
+    setTemplateType(template.template_type || "");
+    setTemplateName(template.template_name);
+    setHistory(template.content?.history || "");
+    setFindings(template.content?.findings || "");
+    setConclusion(template.content?.conclusion || "");
+    setActiveSub("Add Template");
+  };
 
+  /* ============================
+     UI
+  ============================ */
   return (
     <MainLayout>
       <div className="reporting-container">
         <h1 className="page-title">
-  {editingId ? "Update Template" : "Add Template"}
-</h1>
+          {editingId ? "Update Template" : "Add Template"}
+        </h1>
 
-
-        
-
-        {/* Sub Navigation */}
         <div className="sub-buttons-container">
           {sections[activeMain].map(sub => (
             <button
@@ -199,98 +206,129 @@ const handleEditTemplate = (template) => {
           ))}
         </div>
 
-        {/* Add Template */}
         {activeSub === "Add Template" && (
           <div className="add-template-container">
+
+            {/* Modality */}
             <label>Modality</label>
-            <select className="input-box" value={templateModality} onChange={e => setTemplateModality(e.target.value)}>
-              <option value="">Select Modality</option>
+            <input
+              list="modality-list"
+              className="input-box"
+              value={templateModality}
+              onChange={e => setTemplateModality(e.target.value)}
+              placeholder="Select or type modality (e.g., CR, CT, MRI)"
+            />
+            <datalist id="modality-list">
               {modalities.map(m => (
-                <option key={m.id} value={m.code}>{m.code} - {m.name}</option>
+                <option key={m.id} value={m.code} />
               ))}
-            </select>
+            </datalist>
 
+            {/* Body Part */}
             <label>Body Part</label>
-            <select className="input-box" value={templateBody} onChange={e => setTemplateBody(e.target.value)}>
-              <option value="">Select Body Part</option>
+            <input
+              list="bodypart-list"
+              className="input-box"
+              value={templateBody}
+              onChange={e => setTemplateBody(e.target.value)}
+              placeholder="Select or type body part"
+            />
+            <datalist id="bodypart-list">
               {bodyParts.map(bp => (
-                <option key={bp.id} value={bp.name}>{bp.name}</option>
+                <option key={bp.id} value={bp.name} />
               ))}
-            </select>
+            </datalist>
 
+            {/* Template Type */}
             <label>Template Type</label>
-            <select className="input-box" value={templateType} onChange={e => setTemplateType(e.target.value)}>
+            <select
+              className="input-box"
+              value={templateType}
+              onChange={e => setTemplateType(e.target.value)}
+            >
+              <option value="">Select Type (optional)</option>
               <option value="plain">Plain</option>
               <option value="normal">Normal</option>
             </select>
 
-            <label>Template Name (Auto-generated)</label>
-            <input type="text" className="input-box" value={templateName} readOnly />
+            {/* Template Name */}
+            <label>Template Name</label>
+            <input
+              type="text"
+              className="input-box"
+              value={templateName}
+              onChange={(e) => {
+                setTemplateName(e.target.value);
+                setIsTemplateNameManual(true);
+              }}
+              placeholder="Auto-generated, you can edit"
+            />
 
-              <label>History</label>
-            <textarea className="input-box" rows="4" value={History} onChange={e => setHistory(e.target.value)} />
+            <label>History</label>
+            <textarea
+              className="input-box"
+              rows="3"
+              value={History}
+              onChange={e => setHistory(e.target.value)}
+            />
 
             <label>Findings</label>
-            <textarea className="input-box" rows="4" value={findings} onChange={e => setFindings(e.target.value)} />
+            <textarea
+              className="input-box"
+              rows="4"
+              value={findings}
+              onChange={e => setFindings(e.target.value)}
+            />
 
             <label>Conclusion</label>
-            <textarea className="input-box" rows="4" value={conclusion} onChange={e => setConclusion(e.target.value)} />
+            <textarea
+              className="input-box"
+              rows="3"
+              value={conclusion}
+              onChange={e => setConclusion(e.target.value)}
+            />
 
             <div className="button-group">
-              <button className="default-btn" onClick={fillDefaultTemplate}>Default Template</button>
+              <button className="default-btn" onClick={fillDefaultTemplate}>
+                Default Template
+              </button>
               <button className="add-btn" onClick={handleAddTemplate}>
-  {editingId ? "Update Template" : "Save Template"}
-</button>
-
+                {editingId ? "Update Template" : "Save Template"}
+              </button>
             </div>
           </div>
         )}
 
-        {/* View Templates */}
         {activeSub === "View Templates" && (
-          <div className="view-templates-container">
-            {templates.length === 0 ? (
-              <p>No templates found. Please add a template.</p>
-            ) : (
-              <table className="template-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Modality</th>
-                    <th>Body Part</th>
-                    <th>Type</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {templates.map(t => (
-                    <tr key={t.id}>
-                      <td>{t.template_name}</td>
-                      <td>{t.modality}</td>
-                      <td>{t.body_part}</td>
-                      <td>{t.template_type}</td>
-                      <td>
-  <button
-    className="edit-btn"
-    onClick={() => handleEditTemplate(t)}
-  >
-    Edit
-  </button>
-
-  <button
-    className="delete-btn"
-    onClick={() => deleteTemplate(t.id)}
-  >
-    Delete
-  </button>
-</td>
-
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+          <table className="template-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Modality</th>
+                <th>Body Part</th>
+                <th>Type</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {templates.map(t => (
+                <tr key={t.id}>
+                  <td>{t.template_name}</td>
+                  <td>{t.modality}</td>
+                  <td>{t.body_part}</td>
+                  <td>{t.template_type}</td>
+                  <td>
+                    <button className="edit-btn" onClick={() => handleEditTemplate(t)}>
+                      Edit
+                    </button>
+                    <button className="delete-btn" onClick={() => deleteTemplate(t.id)}>
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </MainLayout>
