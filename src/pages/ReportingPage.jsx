@@ -49,6 +49,33 @@ export default function ReportingPage() {
   const [previewReport, setPreviewReport] = useState(null);
 
   const [visibleStudies, setVisibleStudies] = useState([]);
+  // Add below your other useState hooks
+  const [isAddendum, setIsAddendum] = useState(false);       // Is currently adding addendum
+  const [parentReportId, setParentReportId] = useState(null); // Store parent report id
+  const [noteInput, setNoteInput] = useState("");            // Note/reason for addendum
+  // Add these at the top inside ReportingPage
+const [history, setHistory] = useState("");
+const [findings, setFindings] = useState("");
+const [conclusion, setConclusion] = useState("");
+const [templateType, setTemplateType] = useState("");
+const [templateModality, setTemplateModality] = useState("");
+
+const handleAddendum = (originalReport) => {
+  // Prefill fields
+  setHistory(originalReport.history || "");
+  setFindings(originalReport.findings || "");
+  setConclusion(originalReport.conclusion || "");
+  setTemplateType(originalReport.template_type || "");
+  setTemplateModality(originalReport.modality || "");
+
+  // Store parent report ID
+  setParentReportId(originalReport.id);
+  setNoteInput("");
+  setIsAddendum(true);
+
+  // Navigate using study_uid, not report.id
+  navigate(`/report-panel?study=${encodeURIComponent(originalReport.study_uid)}`, { state: { isAddendum: true } });
+};
 
   // ========================== Fetch Reports Function ==========================
   const fetchReports = async () => {
@@ -221,6 +248,31 @@ export default function ReportingPage() {
       setFilterToDate(getTodayDateInput());
     }
   };
+// ========================== Send Report Handler ==========================
+const handleSendReport = (report) => {
+  // Example: Save the report file with the patient's name
+  const filename = `${report.patient_name || "report"}.txt`;
+
+  // Here we simulate saving the report as a text file
+  const reportContent = `
+Patient Name: ${report.patient_name}
+Patient ID: ${report.patient_id}
+Modality: ${report.modality}
+Accession No: ${report.accession_number}
+Study Date: ${report.study_date || formatDateShort(report.created_at)}
+Status: ${report.status}
+`;
+
+  // Create a blob and trigger download (basic frontend implementation)
+  const blob = new Blob([reportContent], { type: "text/plain" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+
+  alert(`Report saved as "${filename}"`);
+};
 
   // ========================== Report Preview Modal ==========================
   function ReportPreviewModal({ report, onClose }) {
@@ -415,12 +467,12 @@ export default function ReportingPage() {
       {/* Final → Addendum */}
       {r.status === "Final" && (
         <button
-          className="icon-btn"
-          title="Add Addendum"
-          onClick={() => handleAddendum(r)}
-        >
-          📝
-        </button>
+    className="icon-btn"
+    title="Add Addendum"
+    onClick={() => handleAddendum(r)}
+  >
+    📝
+  </button>
       )}
     </div>
   </td>

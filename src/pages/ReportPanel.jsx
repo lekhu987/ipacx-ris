@@ -1,6 +1,6 @@
 // src/pages/ReportPanel.jsx 
 import React, { useEffect, useRef, useState } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import "./ReportPanel.css";
@@ -314,7 +314,12 @@ export default function CreateReport() {
   const [templates, setTemplates] = useState([]);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [listening, setListening] = useState(false);
-const recognitionRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const location = useLocation(); // import from react-router-dom
+const [isAddendum, setIsAddendum] = useState(false);
+const [noteInput, setNoteInput] = useState("");
+const [parentReportId, setParentReportId] = useState(null);
+
 
 //voice based 
 useEffect(() => {
@@ -426,27 +431,45 @@ useEffect(() => {
 
       const reportContent = reportData?.report_content || {};
 
-      // 3️⃣ Update state
-      setStudy({
-        PatientName: studyData.PatientName || studyData.patient_name || "",
-        PatientAge: studyData.PatientAge || studyData.patient_age || "",
-        PatientSex: studyData.PatientSex || studyData.patient_sex || "",
-        PatientID: studyData.PatientID || studyData.patient_id || "",
-        AccessionNumber: studyData.AccessionNumber || studyData.accession_number || "",
-        Modality: studyData.Modality || studyData.modality || "",
-        StudyDate: studyData.StudyDate || studyData.study_date || "",
-        StudyTime: studyData.StudyTime || studyData.study_time || "",
-        ReferringPhysicianName: reportData?.referring_doctor || studyData.ReferringPhysicianName || studyData.referring_physician || "",
-        BodyPartExamined: reportData?.body_part || studyData.BodyPartExamined || studyData.body_part || "",
-        ReportedBy: reportData?.reported_by || "",
-        ApprovedBy: reportData?.approved_by || "",
-        ReportStatus: reportData?.status || "",
-      });
-      setIsLoadingReport(false);
+      // 3️⃣ Check if opening as Addendum
+      if (location.state?.isAddendum && location.state?.parentReportData) {
+        const parent = location.state.parentReportData;
 
-      setHistory(reportContent.history || "");
-      setFindings(reportContent.findings || "");
-      setConclusion(reportContent.conclusion || "");
+        // prefill from parent report
+        setHistory(parent.history || "");
+        setFindings(parent.findings || "");
+        setConclusion(parent.conclusion || "");
+        setStudy((prev) => ({
+          ...prev,
+          BodyPartExamined: parent.body_part || prev.BodyPartExamined,
+          Modality: parent.modality || prev.Modality,
+          ReferringPhysicianName: parent.referring_doctor || prev.ReferringPhysicianName,
+        }));
+        setParentReportId(parent.id);
+        setIsAddendum(true);
+        setNoteInput(""); // empty by default
+      } else {
+        // normal report
+        setStudy({
+          PatientName: studyData.PatientName || studyData.patient_name || "",
+          PatientAge: studyData.PatientAge || studyData.patient_age || "",
+          PatientSex: studyData.PatientSex || studyData.patient_sex || "",
+          PatientID: studyData.PatientID || studyData.patient_id || "",
+          AccessionNumber: studyData.AccessionNumber || studyData.accession_number || "",
+          Modality: studyData.Modality || studyData.modality || "",
+          StudyDate: studyData.StudyDate || studyData.study_date || "",
+          StudyTime: studyData.StudyTime || studyData.study_time || "",
+          ReferringPhysicianName: reportData?.referring_doctor || studyData.ReferringPhysicianName || studyData.referring_physician || "",
+          BodyPartExamined: reportData?.body_part || studyData.BodyPartExamined || studyData.body_part || "",
+          ReportedBy: reportData?.reported_by || "",
+          ApprovedBy: reportData?.approved_by || "",
+          ReportStatus: reportData?.status || "",
+        });
+
+        setHistory(reportContent.history || "");
+        setFindings(reportContent.findings || "");
+        setConclusion(reportContent.conclusion || "");
+      }
 
       // 4️⃣ Load key images if present
       if (Array.isArray(reportData?.images) && reportData.images.length > 0) {
@@ -482,20 +505,7 @@ useEffect(() => {
   };
 
   loadStudyAndReport();
-}, [studyUID]);
-
-useEffect(() => {
-  if (isLoadingReport) return;        // 🔴 STOP during load
-  if (isManualTitle) return;
-
-  const modality = study.Modality?.trim();
-  const bodyPart = study.BodyPartExamined?.trim();
-
-  if (!modality) return;
-
-  const title = `${modality}${bodyPart ? " " + bodyPart : ""} REPORT`;
-  setReportTitle(title);
-}, [study.Modality, study.BodyPartExamined, isManualTitle, isLoadingReport]);
+}, [studyUID, location.state]);
 
 
   /* ===========================
@@ -731,6 +741,18 @@ const handleSaveReport = async (status) => {
         }}
       >
         <header style={{ display: "none" }} />
+{isAddendum && (
+  <>
+    <label>Reason for Addendum</label>
+    <textarea
+      className="input-box"
+      rows="2"
+      value={noteInput}
+      onChange={(e) => setNoteInput(e.target.value)}
+      placeholder="Enter reason for addendum"
+    />
+  </>
+)}
 
         {/* Toolbar row - UPDATED BUTTONS */}
         <div className="top-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
