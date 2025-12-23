@@ -3,14 +3,26 @@ const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const { Pool } = require("pg");
+const fs = require("fs");
+const path = require("path");
+const multer = require("multer");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+const JWT_EXPIRES = "8h";
+
+
 app.use(cors());
 app.use(express.json());
-const fs = require("fs");
-const path = require("path");
+app.use(
+  "/uploads/report_images",
+  express.static(path.join(__dirname, "uploads/report_images"))
+);
 
 /* ======================================================
    PostgreSQL CONNECTION
@@ -26,11 +38,7 @@ const pool = new Pool({
 /* ======================================================
    ORTHANC CONNECTION CONFIG
 ====================================================== */
-const ORTHANC_URL = (process.env.ORTHANC_URL || "http://192.168.1.34:8042/").replace(
-  /\/?$/,
-  "/"
-);
-
+const ORTHANC_URL = (process.env.ORTHANC_URL || "http://192.168.1.34:8042/").replace(/\/?$/, "/");
 const ORTHANC_AUTH = {
   username: process.env.ORTHANC_USER || "lekhana",
   password: process.env.ORTHANC_PASS || "lekhana",
@@ -49,50 +57,89 @@ function extractAgeFromName(name) {
 }
 
 /* ======================================================
+   AUTH LOGIN
+====================================================== */
+app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password required" });
+    }
+
+    // 🔐 TEMP: hardcoded user (can move to DB later)
+    const USER = {
+      username: "admin",
+      password: "admin123", // later store hashed password
+      role: "ADMIN"
+    };
+
+    if (username !== USER.username || password !== USER.password) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    const token = jwt.sign(
+      { username: USER.username, role: USER.role },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { username: USER.username, role: USER.role }
+    });
+  } catch (err) {
+    console.error("Login error:", err.message);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+/* ======================================================
+   JWT AUTH MIDDLEWARE
+====================================================== */
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ error: "Access token missing" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: "Invalid or expired token" });
+    }
+    req.user = user;
+    next();
+  });
+}
+
+
+/* ======================================================
    GET STUDIES FROM ORTHANC
-   /api/studies
 ====================================================== */
 app.get("/api/studies", async (req, res) => {
   try {
-    const { data: studyIds } = await axios.get(`${ORTHANC_URL}studies`, {
-      auth: ORTHANC_AUTH,
-    });
-
+    const { data: studyIds } = await axios.get(`${ORTHANC_URL}studies`, { auth: ORTHANC_AUTH });
     const studies = [];
 
     for (const id of studyIds) {
       try {
-        const { data: study } = await axios.get(`${ORTHANC_URL}studies/${id}`, {
-          auth: ORTHANC_AUTH,
-        });
-
+        const { data: study } = await axios.get(`${ORTHANC_URL}studies/${id}`, { auth: ORTHANC_AUTH });
         const patientName = study.PatientMainDicomTags?.PatientName || "N/A";
         const sexRaw = study.PatientMainDicomTags?.PatientSex || "O";
+        const patientSex = sexRaw === "M" ? "Male" : sexRaw === "F" ? "Female" : "Other";
 
-        let patientSex =
-          sexRaw === "M" ? "Male" : sexRaw === "F" ? "Female" : "Other";
-
-        let seriesCount = 0;
-        let instancesCount = 0;
-        let modality = "N/A";
+        let seriesCount = 0, instancesCount = 0, modality = "N/A";
 
         if (study.Series?.length > 0) {
           seriesCount = study.Series.length;
           const seriesInfo = await Promise.all(
-            study.Series.map((sid) =>
-              axios.get(`${ORTHANC_URL}series/${sid}`, { auth: ORTHANC_AUTH })
-            )
+            study.Series.map(sid => axios.get(`${ORTHANC_URL}series/${sid}`, { auth: ORTHANC_AUTH }))
           );
-
-          modality =
-            seriesInfo[0]?.data?.MainDicomTags?.Modality ||
-            study.MainDicomTags?.Modality ||
-            "N/A";
-
-          instancesCount = seriesInfo.reduce(
-            (sum, s) => sum + (s.data?.Instances?.length || 0),
-            0
-          );
+          modality = seriesInfo[0]?.data?.MainDicomTags?.Modality || study.MainDicomTags?.Modality || "N/A";
+          instancesCount = seriesInfo.reduce((sum, s) => sum + (s.data?.Instances?.length || 0), 0);
         }
 
         studies.push({
@@ -100,17 +147,13 @@ app.get("/api/studies", async (req, res) => {
           PatientName: patientName,
           PatientAge: extractAgeFromName(patientName),
           PatientSex: patientSex,
-
           AccessionNumber: study.MainDicomTags?.AccessionNumber || "N/A",
           StudyDescription: study.MainDicomTags?.StudyDescription || "",
           StudyDate: study.MainDicomTags?.StudyDate || "",
-
           Modality: modality,
           Series: seriesCount,
           Instances: instancesCount,
-
-          StudyInstanceUID:
-            study.MainDicomTags?.StudyInstanceUID || study.ID,
+          StudyInstanceUID: study.MainDicomTags?.StudyInstanceUID || study.ID,
         });
       } catch (err) {
         console.error(`Study load error ${id}:`, err.message);
@@ -125,9 +168,9 @@ app.get("/api/studies", async (req, res) => {
 });
 
 /* ======================================================
-   ADD MWL ENTRY
-   POST /api/mwl
+   MWL ROUTES
 ====================================================== */
+// Add MWL
 app.post("/api/mwl", async (req, res) => {
   try {
     const entry = req.body;
@@ -156,20 +199,14 @@ app.post("/api/mwl", async (req, res) => {
       ]
     );
 
-    res.json({
-      message: "Added to MWL successfully",
-      entry: result.rows[0],
-    });
+    res.json({ message: "Added to MWL successfully", entry: result.rows[0] });
   } catch (err) {
     console.error("MWL add error:", err.message);
     res.status(500).json({ error: "Failed to add MWL" });
   }
 });
 
-/* ======================================================
-   LIST MWL ENTRIES
-   GET /api/mwl
-====================================================== */
+// List MWL
 app.get("/api/mwl", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM mwl ORDER BY id DESC");
@@ -180,18 +217,11 @@ app.get("/api/mwl", async (req, res) => {
   }
 });
 
-/* ======================================================
-   DELETE MWL ENTRY
-   DELETE /api/mwl/:id
-====================================================== */
+// Delete MWL
 app.delete("/api/mwl/:id", async (req, res) => {
   try {
-    const result = await pool.query("DELETE FROM mwl WHERE id=$1 RETURNING *", [
-      req.params.id,
-    ]);
-    if (result.rowCount === 0)
-      return res.status(404).json({ error: "MWL entry not found" });
-
+    const result = await pool.query("DELETE FROM mwl WHERE id=$1 RETURNING *", [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "MWL entry not found" });
     res.json({ message: "MWL entry deleted", deleted: result.rows[0] });
   } catch (err) {
     console.error("MWL delete error:", err.message);
@@ -199,10 +229,7 @@ app.delete("/api/mwl/:id", async (req, res) => {
   }
 });
 
-/* ======================================================
-   UPDATE MWL ENTRY
-   PUT /api/mwl/:id
-====================================================== */
+// Update MWL
 app.put("/api/mwl/:id", async (req, res) => {
   try {
     const entry = req.body;
@@ -213,23 +240,14 @@ app.put("/api/mwl/:id", async (req, res) => {
        Modality=$8, BodyPartExamined=$9, ReferringPhysician=$10
        WHERE id=$11 RETURNING *`,
       [
-        entry.PatientID,
-        entry.PatientName,
-        entry.PatientSex,
-        entry.PatientAge,
-        entry.AccessionNumber,
-        entry.StudyDescription,
-        entry.SchedulingDate,
-        entry.Modality,
-        entry.BodyPartExamined,
-        entry.ReferringPhysician,
+        entry.PatientID, entry.PatientName, entry.PatientSex, entry.PatientAge,
+        entry.AccessionNumber, entry.StudyDescription, entry.SchedulingDate,
+        entry.Modality, entry.BodyPartExamined, entry.ReferringPhysician,
         req.params.id,
       ]
     );
 
-    if (result.rowCount === 0)
-      return res.status(404).json({ error: "MWL entry not found" });
-
+    if (result.rowCount === 0) return res.status(404).json({ error: "MWL entry not found" });
     res.json({ message: "MWL updated", entry: result.rows[0] });
   } catch (err) {
     console.error("MWL update error:", err.message);
@@ -238,128 +256,63 @@ app.put("/api/mwl/:id", async (req, res) => {
 });
 
 /* ======================================================
-   SEND MWL ENTRY TO MODALITY (Orthanc forward)
-   POST /api/mwl/:id/send
+   SEND MWL ENTRY TO MODALITY
 ====================================================== */
 app.post("/api/mwl/:id/send", async (req, res) => {
   try {
     let { modality, orthancModalityName } = req.body;
-
-    // Fetch MWL entry
-    const result = await pool.query("SELECT * FROM mwl WHERE id=$1", [
-      req.params.id,
-    ]);
-    if (result.rowCount === 0)
-      return res.status(404).json({ error: "MWL entry not found" });
+    const result = await pool.query("SELECT * FROM mwl WHERE id=$1", [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "MWL entry not found" });
 
     const entry = result.rows[0];
+    modality = modality || entry.Modality;
+    if (!modality && !orthancModalityName) return res.status(400).json({ error: "No modality available to send" });
 
-    // Use stored modality if not provided in request
-    if (!modality) {
-      modality = entry.Modality;
-    }
-
-    if (!modality && !orthancModalityName)
-      return res
-        .status(400)
-        .json({ error: "No modality available to send" });
-
-    const MODALITY_MAP = {
-      CT: "CT_PACS",
-      MR: "MR_PACS",
-      US: "US_PACS",
-      CR: "CR_PACS",
-      DX: "XRAY_PACS",
-    };
-
+    const MODALITY_MAP = { CT: "CT_PACS", MR: "MR_PACS", US: "US_PACS", CR: "CR_PACS", DX: "XRAY_PACS" };
     const target = orthancModalityName || MODALITY_MAP[modality];
+    if (!target) return res.status(400).json({ error: "Unsupported modality" });
 
-    if (!target)
-      return res.status(400).json({ error: "Unsupported modality" });
-
-    // Find internal Orthanc study ID
     let orthancStudyId = entry.studyinstanceuid;
-
     if (!orthancStudyId) {
       const search = { Level: "Study", Query: {} };
-
       if (entry.accessionnumber) search.Query.AccessionNumber = entry.accessionnumber;
       if (entry.patientid) search.Query.PatientID = entry.patientid;
-      if (!search.Query.PatientID && !search.Query.AccessionNumber)
-        search.Query.PatientName = entry.patientname;
+      if (!search.Query.PatientID && !search.Query.AccessionNumber) search.Query.PatientName = entry.patientname;
 
-      const find = await axios.post(`${ORTHANC_URL}tools/find`, search, {
-        auth: ORTHANC_AUTH,
-      });
-
-      if (!find.data?.length)
-        return res
-          .status(404)
-          .json({ error: "No matching Orthanc study found" });
-
+      const find = await axios.post(`${ORTHANC_URL}tools/find`, search, { auth: ORTHANC_AUTH });
+      if (!find.data?.length) return res.status(404).json({ error: "No matching Orthanc study found" });
       orthancStudyId = find.data[0];
     }
 
-    // Send study to modality
     const forward = await axios.post(
       `${ORTHANC_URL}modalities/${target}/store`,
       { Level: "Study", Resources: [orthancStudyId] },
       { auth: ORTHANC_AUTH }
     );
 
-    res.json({
-      success: true,
-      sentTo: target,
-      orthancStudyId,
-      job: forward.data,
-    });
+    res.json({ success: true, sentTo: target, orthancStudyId, job: forward.data });
   } catch (err) {
     console.error("Send error:", err.response?.data || err.message);
-    res.status(500).json({
-      error: "Failed to send MWL",
-      details: err.response?.data || err.message,
-    });
+    res.status(500).json({ error: "Failed to send MWL", details: err.response?.data || err.message });
   }
 });
 
-
 /* ======================================================
-   GET FULL STUDY DETAILS BY UID
-   /api/studies/:uid
+   GET STUDY DETAILS BY UID
 ====================================================== */
 app.get("/api/studies/:uid", async (req, res) => {
   try {
     const uid = req.params.uid;
-
-    const find = await axios.post(
-      `${ORTHANC_URL}tools/find`,
-      {
-        Level: "Study",
-        Query: { StudyInstanceUID: uid },
-      },
-      { auth: ORTHANC_AUTH }
-    );
-
-    if (!find.data?.length)
-      return res.json({ message: "No study found" });
+    const find = await axios.post(`${ORTHANC_URL}tools/find`, { Level: "Study", Query: { StudyInstanceUID: uid } }, { auth: ORTHANC_AUTH });
+    if (!find.data?.length) return res.json({ message: "No study found" });
 
     const studyId = find.data[0];
-
-    const study = await axios.get(`${ORTHANC_URL}studies/${studyId}`, {
-      auth: ORTHANC_AUTH,
-    });
-
+    const study = await axios.get(`${ORTHANC_URL}studies/${studyId}`, { auth: ORTHANC_AUTH });
     const s = study.data;
 
-    let modality = "";
-    let bodyPart = "";
-
+    let modality = "", bodyPart = "";
     if (s.Series?.length) {
-      const series = await axios.get(
-        `${ORTHANC_URL}series/${s.Series[0]}`,
-        { auth: ORTHANC_AUTH }
-      );
-
+      const series = await axios.get(`${ORTHANC_URL}series/${s.Series[0]}`, { auth: ORTHANC_AUTH });
       modality = series.data.MainDicomTags.Modality || "";
       bodyPart = series.data.MainDicomTags.BodyPartExamined || "";
     }
@@ -369,19 +322,14 @@ app.get("/api/studies/:uid", async (req, res) => {
       PatientName: s.PatientMainDicomTags.PatientName,
       PatientSex: s.PatientMainDicomTags.PatientSex,
       PatientAge: s.PatientMainDicomTags.PatientAge,
-
       StudyInstanceUID: uid,
       StudyDate: s.MainDicomTags.StudyDate,
       StudyTime: s.MainDicomTags.StudyTime,
       AccessionNumber: s.MainDicomTags.AccessionNumber,
       StudyDescription: s.MainDicomTags.StudyDescription,
-
       Modality: modality,
       BodyPartExamined: bodyPart,
-
-      History: "",
-      Findings: "",
-      Conclusion: "",
+      History: "", Findings: "", Conclusion: "",
     });
   } catch (err) {
     console.error("Fetch study error:", err.message);
@@ -389,83 +337,369 @@ app.get("/api/studies/:uid", async (req, res) => {
   }
 });
 
-//REPORTS
-// Save a new draft
-app.post("/api/reports/draft", async (req, res) => {
+/* ======================================================
+   GET ALL REPORTS (FOR DASHBOARD / TABLE)
+====================================================== */
+app.get("/api/reports", async (req, res) => {
   try {
-    const {
-      study_uid,
-      patient_id,
-      patient_name,
-      modality,
-      report_content,
-      key_images,
-      reported_by,
-    } = req.body;
+    const result = await pool.query(`
+      SELECT
+        r.id,
+        r.study_uid,
+        r.accession_number,
+        r.patient_id,
+        r.patient_name,
+        r.modality,
+        r.status,
+        r.created_at
+      FROM reports r
+      ORDER BY r.created_at DESC
+    `);
 
-    if (!patient_name) return res.status(400).json({ error: "Patient name is required" });
-
-    const reportText = ""; // required field
-    const reportContent = report_content && typeof report_content === "object" ? report_content : {};
-    const keyImages = Array.isArray(key_images) ? key_images : [];
-
-    const result = await pool.query(
-      `INSERT INTO reports 
-        (study_uid, patient_id, patient_name, modality, status, report_text, report_content, key_images, reported_by, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,'Draft',$5,$6,$7,$8,NOW(),NOW())
-       RETURNING *`,
-      [study_uid || null, patient_id || null, patient_name, modality || null, reportText, reportContent, keyImages, reported_by || ""]
-    );
-
-    res.json({ success: true, draft: result.rows[0] });
+    res.json(result.rows);
   } catch (err) {
-    console.error("Draft save error:", err.message);
-    res.status(500).json({ error: "Failed to save draft" });
+    console.error("Fetch reports error:", err.message);
+    res.status(500).json({ error: "Failed to load reports" });
   }
 });
 
-// Update existing draft
-app.put("/api/reports/draft/:id", async (req, res) => {
+/* ======================================================
+   REPORT IMAGE UPLOAD  (FIXED)
+====================================================== */
+const reportImagesDir = path.join(__dirname, "uploads/report_images");
+if (!fs.existsSync(reportImagesDir)) {
+  fs.mkdirSync(reportImagesDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, reportImagesDir);
+  },
+
+  filename: (req, file, cb) => {
+    const studyUID = req.body.studyUID;
+    if (!studyUID) {
+      return cb(new Error("studyUID is required"));
+    }
+
+    const ext = path.extname(file.originalname) || ".jpg";
+
+    // find existing images for same studyUID
+    const existingFiles = fs
+      .readdirSync(reportImagesDir)
+      .filter(f => f.startsWith(studyUID));
+
+    const suffix = existingFiles.length
+      ? `_${existingFiles.length + 1}`
+      : "";
+
+    cb(null, `${studyUID}${suffix}${ext}`);
+  },
+});
+
+const upload = multer({ storage });
+
+app.post("/api/reports/upload", upload.array("images", 10), (req, res) => {
   try {
-    const { patient_name, patient_id, modality, report_content, key_images, reported_by } = req.body;
-
-    const reportContent = report_content && typeof report_content === "object" ? report_content : {};
-    const keyImages = Array.isArray(key_images) ? key_images : [];
-
-    const result = await pool.query(
-      `UPDATE reports SET 
-        patient_name=$1, patient_id=$2, modality=$3, report_content=$4, key_images=$5, reported_by=$6, updated_at=NOW()
-       WHERE id=$7 AND status='Draft'
-       RETURNING *`,
-      [patient_name, patient_id || null, modality || null, reportContent, keyImages, reported_by || "", req.params.id]
+    const paths = req.files.map(
+      f => `/uploads/report_images/${f.filename}`
     );
-
-    if (result.rowCount === 0) return res.status(404).json({ error: "Draft not found" });
-
-    res.json({ success: true, draft: result.rows[0] });
+    res.json({ success: true, paths });
   } catch (err) {
-    console.error("Draft update error:", err.message);
-    res.status(500).json({ error: "Failed to update draft" });
+    console.error("Upload error:", err.message);
+    res.status(500).json({ success: false });
   }
 });
 
-// Finalize draft
-app.post("/api/reports/finalize/:id", async (req, res) => {
+/* ======================================================
+   SAVE OR UPDATE REPORT
+====================================================== */
+app.post("/api/reports/save", async (req, res) => {
   try {
-    const { approved_by } = req.body;
+    const { study_uid, accession_number, patient_id, patient_name, modality,
+            reported_by, approved_by, status, history, findings, conclusion,
+            reportTitle, body_part, referring_doctor, image_paths } = req.body;
 
-    const result = await pool.query(
-      `UPDATE reports SET status='Final', approved_by=$1, updated_at=NOW()
-       WHERE id=$2 AND status='Draft' RETURNING *`,
-      [approved_by || '', req.params.id]
+    const reportContent = { history, findings, conclusion };
+
+    const reportResult = await pool.query(
+      `
+      INSERT INTO reports (
+        study_uid, accession_number, patient_id, patient_name,
+        modality, report_content, reported_by, approved_by, status,
+        report_title, body_part, referring_doctor
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      ON CONFLICT (study_uid)
+      DO UPDATE SET
+        report_content = EXCLUDED.report_content,
+        reported_by = EXCLUDED.reported_by,
+        approved_by = EXCLUDED.approved_by,
+        status = EXCLUDED.status,
+        report_title = EXCLUDED.report_title,
+        body_part = EXCLUDED.body_part,
+        referring_doctor = EXCLUDED.referring_doctor
+      RETURNING id
+      `,
+      [study_uid, accession_number, patient_id, patient_name, modality, reportContent,
+       reported_by, approved_by, status || "Draft", reportTitle, body_part, referring_doctor]
     );
 
-    if (result.rowCount === 0) return res.status(404).json({ error: "Draft not found or already finalized" });
+    const reportId = reportResult.rows[0].id;
 
-    res.json({ success: true, report: result.rows[0] });
+    // Handle images
+    if (Array.isArray(image_paths) && image_paths.length) {
+      await pool.query("DELETE FROM report_images WHERE report_id=$1", [reportId]);
+      for (let i = 0; i < image_paths.length; i++) {
+        await pool.query(
+          `INSERT INTO report_images (report_id, image_path, sort_order) VALUES ($1,$2,$3)`,
+          [reportId, image_paths[i], i + 1]
+        );
+      }
+    }
+
+    res.json({ success: true, reportId });
   } catch (err) {
-    console.error("Finalize error:", err.message);
-    res.status(500).json({ error: "Failed to finalize report" });
+    console.error("Save report error:", err.message);
+    res.status(500).json({ error: "Failed to save report" });
+  }
+});
+
+
+/* ======================================================
+   GET REPORT BY STUDY UID
+====================================================== */
+app.get("/api/reports/by-study/:uid", async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const reportRes = await pool.query("SELECT * FROM reports WHERE study_uid=$1", [uid]);
+    if (!reportRes.rows.length) return res.json(null);
+
+    const report = reportRes.rows[0];
+    const imagesRes = await pool.query(
+      `SELECT image_path, image_type, sort_order
+       FROM report_images
+       WHERE report_id=$1
+       ORDER BY sort_order`,
+      [report.id]
+    );
+
+    res.json({ 
+      ...report,
+      report_content: report.report_content,
+      report_title: report.report_title,
+      body_part: report.body_part,
+      referring_doctor: report.referring_doctor,
+      images: imagesRes.rows 
+    });
+  } catch (err) {
+    console.error("Fetch report error:", err.message);
+    res.status(500).json({ error: "Failed to load report" });
+  }
+});
+
+
+// Get all active modalities
+app.get("/api/modalities", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, code, name FROM modalities WHERE is_active = true ORDER BY id"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch modalities error:", err.message);
+    res.status(500).json({ error: "Failed to fetch modalities" });
+  }
+});
+
+// Get active body parts by modality_id
+app.get("/api/body-parts", async (req, res) => {
+  try {
+    const modality_id = req.query.modality_id;
+    if (!modality_id) return res.status(400).json({ error: "modality_id is required" });
+
+    const result = await pool.query(
+      "SELECT id, name FROM body_parts WHERE modality_id = $1 AND is_active = true ORDER BY id",
+      [modality_id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch body parts error:", err.message);
+    res.status(500).json({ error: "Failed to fetch body parts" });
+  }
+});
+
+// ========================
+// REPORT TEMPLATES ROUTES
+// ========================
+
+// Create a new template
+app.post("/api/report-templates", async (req, res) => {
+  try {
+    const { template_name, modality, body_part, template_type, content, created_by, created_by_role } = req.body;
+
+    if (!content) {
+      return res.status(400).json({ error: "Content is required" });
+    }
+
+    const finalTemplateName =
+      template_name && template_name.trim() !== ""
+        ? template_name
+        : modality && body_part
+        ? `${modality}_${body_part}_${template_type || "plain"}`
+        : null;
+
+    const result = await pool.query(
+      `
+      INSERT INTO report_templates
+      (template_name, modality, body_part, template_type, content, created_by, created_by_role, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
+      RETURNING *
+      `,
+      [
+        finalTemplateName,
+        modality || null,
+        body_part || null,
+        template_type || "plain",
+        JSON.stringify(content),
+        created_by || null,
+        created_by_role || null
+      ]
+    );
+
+    const created = result.rows[0];
+    created.content = content;
+
+    res.json({ success: true, template: created });
+  } catch (err) {
+    console.error("Create template error:", err.message);
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "Template with same Modality + Body Part + Name already exists" });
+    }
+    res.status(500).json({ error: "Failed to create template" });
+  }
+});
+
+// Get all templates
+app.get("/api/report-templates", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM report_templates ORDER BY updated_at DESC");
+    const templates = result.rows.map(r => ({ ...r, content: r.content }));
+    res.json(templates);
+  } catch (err) {
+    console.error("Fetch templates error:", err.message);
+    res.status(500).json({ error: "Failed to fetch templates" });
+  }
+});
+
+// Get template by ID
+app.get("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("SELECT * FROM report_templates WHERE id=$1", [id]);
+    if (!result.rows.length) return res.status(404).json({ error: "Template not found" });
+
+    const template = result.rows[0];
+    template.content = template.content; // keep as JSON
+    res.json(template);
+  } catch (err) {
+    console.error("Fetch template error:", err.message);
+    res.status(500).json({ error: "Failed to fetch template" });
+  }
+});
+
+// Update template
+app.put("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { template_name, modality, body_part, template_type, content, created_by, created_by_role } = req.body;
+
+    if (!content) return res.status(400).json({ error: "Content is required" });
+
+    const finalTemplateName =
+      template_name && template_name.trim() !== ""
+        ? template_name
+        : modality && body_part
+        ? `${modality}_${body_part}_${template_type || "plain"}`
+        : null;
+
+    const result = await pool.query(
+      `
+      UPDATE report_templates
+      SET
+        template_name = COALESCE($1, template_name),
+        modality = COALESCE($2, modality),
+        body_part = COALESCE($3, body_part),
+        template_type = COALESCE($4, template_type),
+        content = $5::jsonb,
+        created_by = COALESCE($6, created_by),
+        created_by_role = COALESCE($7, created_by_role),
+        updated_at = NOW()
+      WHERE id=$8
+      RETURNING *
+      `,
+      [
+        finalTemplateName,
+        modality || null,
+        body_part || null,
+        template_type || null,
+        JSON.stringify(content),
+        created_by || null,
+        created_by_role || null,
+        id
+      ]
+    );
+
+    if (!result.rows.length) return res.status(404).json({ error: "Template not found" });
+
+    const updated = result.rows[0];
+    updated.content = content;
+    res.json(updated);
+  } catch (err) {
+    console.error("Update template error:", err.message);
+    if (err.code === "23505") {
+      return res.status(409).json({ error: "Template with same Modality + Body Part + Name already exists" });
+    }
+    res.status(500).json({ error: "Failed to update template" });
+  }
+});
+
+app.get("/api/report-templates/filter", async (req, res) => {
+  try {
+    const { modality, body_part } = req.query;
+    const conditions = [];
+    const values = [];
+
+    if (modality) {
+      values.push(modality);
+      conditions.push(`modality = $${values.length}`);
+    }
+    if (body_part) {
+      values.push(body_part);
+      conditions.push(`body_part = $${values.length}`);
+    }
+
+    const query = `SELECT * FROM report_templates ${conditions.length ? "WHERE " + conditions.join(" AND ") : ""} ORDER BY updated_at DESC`;
+    const result = await pool.query(query, values);
+    res.json(result.rows.map(r => ({ ...r, content: r.content })));
+  } catch (err) {
+    console.error("Filter templates error:", err.message);
+    res.status(500).json({ error: "Failed to fetch templates" });
+  }
+});
+
+
+// Delete template
+app.delete("/api/report-templates/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("DELETE FROM report_templates WHERE id=$1 RETURNING *", [id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: "Template not found" });
+
+    res.json({ success: true, message: "Template deleted", deleted: result.rows[0] });
+  } catch (err) {
+    console.error("Delete template error:", err.message);
+    res.status(500).json({ error: "Failed to delete template" });
   }
 });
 

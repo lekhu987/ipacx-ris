@@ -8,7 +8,14 @@ import "./ReportPanel.css";
 /* ===========================
       RichEditor component
    ========================== */
-function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }) {
+function RichEditor({
+  value,
+  onChange,
+  onFocus,
+  onSelectionChange,
+  placeholder,
+  disabled = false,
+}) {
   const ref = useRef();
 
   useEffect(() => {
@@ -17,38 +24,33 @@ function RichEditor({ value, onChange, onFocus, onSelectionChange, placeholder }
     }
   }, [value]);
 
-  const handleSelectionChange = () => {
-    try {
-      if (typeof onSelectionChange === "function") onSelectionChange();
-    } catch {}
-  };
-
   return (
     <div
       ref={ref}
-      contentEditable
+      contentEditable={!disabled}
       suppressContentEditableWarning
       onFocus={() => {
-        if (typeof onFocus === "function") onFocus(ref.current);
-        setTimeout(handleSelectionChange, 0);
+        if (!disabled && typeof onFocus === "function") {
+          onFocus(ref.current);
+          setTimeout(onSelectionChange, 0);
+        }
       }}
-      onInput={(e) => onChange(e.currentTarget.innerHTML)}
-      onMouseUp={handleSelectionChange}
-      onKeyUp={handleSelectionChange}
-      onTouchEnd={handleSelectionChange}
+      onInput={(e) => !disabled && onChange(e.currentTarget.innerHTML)}
+      onMouseUp={!disabled ? onSelectionChange : undefined}
+      onKeyUp={!disabled ? onSelectionChange : undefined}
       style={{
         minHeight: 100,
         padding: 8,
         border: "1px solid #aaa",
-        backgroundColor: "#fff",
-        fontFamily: "inherit",
-        overflowY: "auto",
-        whiteSpace: "pre-wrap",
+        backgroundColor: disabled ? "#f1f3f5" : "#fff",
+        cursor: disabled ? "not-allowed" : "text",
       }}
       data-placeholder={placeholder}
     />
   );
 }
+
+//reporttitle
 function ReportTitle({ value, onChange, onManualEdit }) {
   const ref = useRef();
 
@@ -319,6 +321,19 @@ export default function CreateReport() {
 const [isAddendum, setIsAddendum] = useState(false);
 const [noteInput, setNoteInput] = useState("");
 const [parentReportId, setParentReportId] = useState(null);
+const [addendumConfirmed, setAddendumConfirmed] = useState(false);
+
+
+//report tile
+useEffect(() => {
+  if (!isManualTitle) {
+    const modality = study.Modality || "";
+    const bodyPart = study.BodyPartExamined || "";
+    if (modality && bodyPart) {
+      setReportTitle(`${modality} ${bodyPart} REPORT`);
+    }
+  }
+}, [study.Modality, study.BodyPartExamined, isManualTitle]);
 
 
 //voice based 
@@ -430,25 +445,33 @@ useEffect(() => {
       }
 
       const reportContent = reportData?.report_content || {};
+      // ✅ ALWAYS set parentReportId from backend report
+if (reportData?.id) {
+  setParentReportId(reportData.id);
+}
 
-      // 3️⃣ Check if opening as Addendum
-      if (location.state?.isAddendum && location.state?.parentReportData) {
-        const parent = location.state.parentReportData;
+// 3️⃣ Check if opening as Addendum from location.state
+if (location.state?.isAddendum && location.state?.parentReportData) {
+  const parent = location.state.parentReportData;
 
-        // prefill from parent report
-        setHistory(parent.history || "");
-        setFindings(parent.findings || "");
-        setConclusion(parent.conclusion || "");
-        setStudy((prev) => ({
-          ...prev,
-          BodyPartExamined: parent.body_part || prev.BodyPartExamined,
-          Modality: parent.modality || prev.Modality,
-          ReferringPhysicianName: parent.referring_doctor || prev.ReferringPhysicianName,
-        }));
-        setParentReportId(parent.id);
-        setIsAddendum(true);
-        setNoteInput(""); // empty by default
-      } else {
+  setHistory(parent.history || "");
+  setFindings(parent.findings || "");
+  setConclusion(parent.conclusion || "");
+  setStudy((prev) => ({
+    ...prev,
+    BodyPartExamined: parent.body_part || prev.BodyPartExamined,
+    Modality: parent.modality || prev.Modality,
+    ReferringPhysicianName: parent.referring_doctor || prev.ReferringPhysicianName,
+  }));
+  setParentReportId(parent.id);
+  setIsAddendum(true);
+  setNoteInput(location.state.addendumReason || "");
+} else if (reportData?.status === "Addendum" && reportData?.addendum_reason) {
+  // <-- NEW: populate noteInput from database
+  setIsAddendum(true);
+  setNoteInput(reportData.addendum_reason);
+}
+ else {
         // normal report
         setStudy({
           PatientName: studyData.PatientName || studyData.patient_name || "",
@@ -568,6 +591,8 @@ const handleSaveReport = async (status) => {
     referring_doctor: study.ReferringPhysicianName,
     body_part: study.BodyPartExamined,
     image_paths: keyImages.map((url) => url.replace("http://localhost:5000", "")),
+    parent_report_id: isAddendum ? parentReportId : null, // reference to original report
+  addendum_reason: isAddendum ? noteInput : null,      // reason for addendum
   };
 
   try {
@@ -585,6 +610,12 @@ const handleSaveReport = async (status) => {
     alert("Failed to save report");
   }
 };
+
+useEffect(() => {
+  if (location.state?.isAddendum) {
+    setIsAddendum(true);
+  }
+}, [location.state]);
 
   /* ===========================
         PDF export
@@ -740,19 +771,72 @@ const handleSaveReport = async (status) => {
           overflowY: "auto",
         }}
       >
-        <header style={{ display: "none" }} />
-{isAddendum && (
-  <>
-    <label>Reason for Addendum</label>
-    <textarea
-      className="input-box"
-      rows="2"
-      value={noteInput}
-      onChange={(e) => setNoteInput(e.target.value)}
-      placeholder="Enter reason for addendum"
-    />
-  </>
+     {isAddendum && (
+  <div style={{ marginBottom: 12 }}>
+    {!addendumConfirmed ? (
+      // BEFORE CONFIRM
+      <div style={{ display: "flex", gap: 8 }}>
+        <input
+          type="text"
+          placeholder="Enter addendum reason"
+          value={noteInput}
+          onChange={(e) => setNoteInput(e.target.value)}
+          style={{ padding: "4px 6px", minWidth: 250 }}
+        />
+
+        <button
+          onClick={async () => {
+            if (!noteInput.trim()) {
+              alert("Please enter a reason");
+              return;
+            }
+            if (!parentReportId) {
+              alert("Parent report not found");
+              return;
+            }
+
+            try {
+              const res = await fetch("/api/report-addendums", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  report_id: parentReportId,
+                  study_uid: studyUID,
+                  reason: noteInput,
+                  created_by: study.ReportedBy || "system",
+                }),
+              });
+
+              const data = await res.json();
+              if (data.success) {
+                setAddendumConfirmed(true); // ✅ LOCK
+              } else {
+                alert(data.error || "Failed to save reason");
+              }
+            } catch {
+              alert("Error saving addendum");
+            }
+          }}
+        >
+          OK
+        </button>
+      </div>
+    ) : (
+      // AFTER CONFIRM (READ-ONLY)
+      <div
+        style={{
+          padding: "6px 8px",
+          background: "#f1f3f5",
+          borderLeft: "4px solid #0d6efd",
+          fontSize: 13,
+        }}
+      >
+        <strong>Addendum Reason:</strong> {noteInput}
+      </div>
+    )}
+  </div>
 )}
+
 
         {/* Toolbar row - UPDATED BUTTONS */}
         <div className="top-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
@@ -916,28 +1000,48 @@ const handleSaveReport = async (status) => {
 
           <div className="status-buttons" style={{ display: "flex", gap: 6 }}>
             {/* DRAFT BUTTON: Calls handleSaveReport with "Draft" status */}
-            <button 
-              className="status-btn draft" 
-              onClick={() => handleSaveReport("Draft")}
-              style={{ padding: "6px 14px", borderRadius: 4, background: "#6c757d", color: "#fff" }}
-            >
-              Draft
-            </button>
-            
-            {/* FINAL BUTTON: Calls handleSaveReport with "Final" status */}
-           <button
-  onClick={() => handleSaveReport("Final")}
-  disabled={!study.ApprovedBy} // safe check
-  style={{
-    cursor: study.ApprovedBy ? "pointer" : "not-allowed",
-    background: study.ApprovedBy ? "#198754" : "#6c757d",
-  }}
->
-  Final
-</button>
+            <div className="status-buttons" style={{ display: "flex", gap: 6 }}>
+  {!isAddendum && (
+    <>
+      <button
+        className="status-btn draft"
+        onClick={() => handleSaveReport("Draft")}
+        style={{ padding: "6px 14px", borderRadius: 4, background: "#6c757d", color: "#fff" }}
+      >
+        Draft
+      </button>
 
+      <button
+        onClick={() => handleSaveReport("Final")}
+        disabled={!study.ApprovedBy}
+        style={{
+          cursor: study.ApprovedBy ? "pointer" : "not-allowed",
+          background: study.ApprovedBy ? "#198754" : "#6c757d",
+          padding: "6px 14px",
+          borderRadius: 4,
+          color: "#fff",
+        }}
+      >
+        Final
+      </button>
+    </>
+  )}
 
-            
+  {isAddendum && (
+    <button
+      onClick={() => handleSaveReport("Addendum")}
+      style={{
+        backgroundColor: "#0d6efd",
+        color: "#fff",
+        padding: "6px 14px",
+        borderRadius: 4,
+      }}
+    >
+      Save Addendum
+    </button>
+  )}
+</div>
+
             <button className="status-btn close" onClick={() => navigate("/reporting")} style={{ padding: "6px 14px", borderRadius: 4, background: "#dc3545", color: "#fff" }}>X</button>
           </div>
         </div>
@@ -1037,13 +1141,15 @@ const handleSaveReport = async (status) => {
         {/* History */}
         <section className="section" style={{ marginBottom: 20 }}>
           <h3 style={{ fontSize: 12, marginBottom: 8 }}>History</h3>
-          <RichEditor
-            value={history}
-            onChange={setHistory}
-            onFocus={handleEditorFocus}
-            onSelectionChange={handleEditorSelectionChange}
-            placeholder="Enter history..."
-          />
+         <RichEditor
+  value={history}
+  onChange={setHistory}
+  onFocus={handleEditorFocus}
+  onSelectionChange={handleEditorSelectionChange}
+  placeholder="Enter history..."
+  disabled={isAddendum && !addendumConfirmed}
+/>
+
         </section>
 
         {/* Findings */}
@@ -1055,6 +1161,7 @@ const handleSaveReport = async (status) => {
             onFocus={handleEditorFocus}
             onSelectionChange={handleEditorSelectionChange}
             placeholder="Enter findings..."
+           disabled={isAddendum && !addendumConfirmed}
           />
         </section>
 
@@ -1159,6 +1266,7 @@ const handleSaveReport = async (status) => {
             onFocus={handleEditorFocus}
             onSelectionChange={handleEditorSelectionChange}
             placeholder="Enter conclusion..."
+            disabled={isAddendum && !addendumConfirmed}
           />
         </section>
 

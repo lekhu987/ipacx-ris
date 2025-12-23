@@ -1,12 +1,23 @@
 // src/layout/MainLayout.jsx
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import "./MainLayout.css";
 
 function MainLayout({ children }) {
   const [showAdminMenu, setShowAdminMenu] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
-  const username = "Admin"; // Replace with logged-in user
+  const navigate = useNavigate();
+
+  // ✅ Get logged-in user
+  const user = JSON.parse(localStorage.getItem("user"));
+  const username = user?.username || "User";
+  const role = user?.role;
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    navigate("/login");
+  };
 
   return (
     <div className="layout-container">
@@ -14,7 +25,7 @@ function MainLayout({ children }) {
       <div className="sidebar">
         <div className="app-name">iPacx RIS</div>
 
-        {/* Menu Links */}
+        {/* Main Menu */}
         <Link to="/dashboard">Dashboard</Link>
         <Link to="/scheduling">Scheduling</Link>
         <Link to="/patientlist">Patient List</Link>
@@ -23,30 +34,35 @@ function MainLayout({ children }) {
         <Link to="/reporting">Reporting</Link>
         <Link to="/inventory">Inventory</Link>
 
-        {/* Admin Settings */}
-        <div
-          className="admin-section-title"
-          onClick={() => setShowAdminMenu(!showAdminMenu)}
-        >
-          Admin Settings
-        </div>
-        {showAdminMenu && (
-          <div className="admin-submenu">
-            <Link to="/admin/user-management">User Management</Link>
-            <Link to="/admin/templates">Template Management</Link>
-            <Link to="/admin/pacs-management">PACS Management</Link>
-            <Link to="/admin/mwls-management">MWLS Management</Link>
-          </div>
+        {/* ✅ ADMIN SETTINGS (only ADMIN sees this) */}
+        {role === "ADMIN" && (
+          <>
+            <div
+              className="admin-section-title"
+              onClick={() => setShowAdminMenu(!showAdminMenu)}
+            >
+              Admin Settings
+            </div>
+
+            {showAdminMenu && (
+              <div className="admin-submenu">
+                <Link to="/admin/user-management">User Management</Link>
+                <Link to="/admin/templates">Template Management</Link>
+                <Link to="/admin/pacs-management">PACS Management</Link>
+                <Link to="/admin/mwls-management">MWLS Management</Link>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Username + Logout */}
+        {/* USERNAME + LOGOUT */}
         <div
           className="bottom-username"
           onClick={() => setShowLogout(!showLogout)}
         >
           {username}
           {showLogout && (
-            <button onClick={() => (window.location.href = "/")}>Logout</button>
+            <button onClick={handleLogout}>Logout</button>
           )}
         </div>
       </div>

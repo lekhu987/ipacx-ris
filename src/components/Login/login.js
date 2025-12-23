@@ -7,16 +7,34 @@ function Login() {
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!username || !password) {
       alert("Please enter username and password");
       return;
     }
 
-    if (username === "admin" && password === "admin123") {
-      navigate("/scheduling"); // redirect to Scheduling
-    } else {
-      alert("Invalid username or password");
+    try {
+      const res = await fetch("http://localhost:5000/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Login failed");
+        return;
+      }
+
+      // ✅ Save JWT
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+
+      navigate("/scheduling");
+    } catch (err) {
+      console.error(err);
+      alert("Server error");
     }
   };
 

@@ -1,5 +1,4 @@
 
-
 /* === TABLE BASE & FIXED LAYOUT === */
 .patient-table {
   
@@ -13,8 +12,8 @@
 }
 
 .patient-table th {
-  padding: 8px 10px; /* Reduced vertical padding slightly */
-  font-weight: 600;
+  padding: 8px 9px; /* Reduced vertical padding slightly */
+  font-weight: 500;
   border-bottom: 1px solid #ddd;
   position: relative;
   top: 0;
@@ -29,15 +28,16 @@
 }
 
 /* === 1. COLUMN WIDTHS (Crucial for fixed layout) === */
-.patient-table th:nth-child(1) { width: 50px; } /* ID */
+.patient-table th:nth-child(1) { width: 40px; } /* ID */
 .patient-table th:nth-child(2) { width: 100px; } /* Patient ID */
 .patient-table th:nth-child(3) { width: 180px; } /* Patient Name */
-.patient-table th:nth-child(4) { width: 110px; } /* Accession # */
-.patient-table th:nth-child(5) { width: 280px; } /* Study Description (Wider) */
-.patient-table th:nth-child(6) { width: 180px; } /* Study Date (Needs space for two inputs) */
+.patient-table th:nth-child(4) { width: 80px; } /* Accession # */
+.patient-table th:nth-child(5) { width: 200px; } /* Study Description (Wider) */
+.patient-table th:nth-child(6) { width: 100px; } /* Study Date (Needs space for two inputs) */
 .patient-table th:nth-child(7) { width: 80px; } /* Modality */
-.patient-table th:nth-child(8) { width: 110px; } /* Series / Inst. */
-.patient-table th:nth-child(9) { width: 80px; } /* Actions (Must match actions column td width) */
+.patient-table th:nth-child(8) { width: 80px; } /* gender */ 
+.patient-table th:nth-child(9) { width: 50px; } /* age */ 
+.patient-table th:nth-child(10) { width: 120px; } /* Actions (Must match actions column td width) */
 
 /* === 2. FILTER BOX LAYOUT === */
 .filter-box {

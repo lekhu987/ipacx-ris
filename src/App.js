@@ -12,6 +12,8 @@ import ReportingPage from "./pages/ReportingPage";
 import ReportPanelPage from "./pages/ReportPanel";  
 import MWLS from "./pages/MWLS";
 import TemplateManagement from "./pages/adminsettings/TemplateManagement";
+import UserManagement from "./pages/adminsettings/UserManagement";
+
 
 // Context
 import { StudiesProvider } from "./context/StudiesContext";
@@ -39,6 +41,11 @@ function App() {
   path="/admin/templates"
   element={<TemplateManagement />}
 />
+<Route
+  path="/admin/user-management"
+  element={<UserManagement />}
+/>
+
           
           {/* Redirect unknown routes */}
           <Route path="*" element={<Navigate to="/scheduling" />} />

@@ -10,6 +10,13 @@ const multer = require("multer");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+
+const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+const JWT_EXPIRES = "8h";
+
+
 app.use(cors());
 app.use(express.json());
 app.use(
@@ -48,6 +55,66 @@ function extractAgeFromName(name) {
   if (monthMatch) return monthMatch[1] + " Months";
   return "N/A";
 }
+
+/* ======================================================
+   AUTH LOGIN
+====================================================== */
+app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password required" });
+    }
+
+    // 🔐 TEMP: hardcoded user (can move to DB later)
+    const USER = {
+      username: "admin",
+      password: "admin123", // later store hashed password
+      role: "ADMIN"
+    };
+
+    if (username !== USER.username || password !== USER.password) {
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    const token = jwt.sign(
+      { username: USER.username, role: USER.role },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { username: USER.username, role: USER.role }
+    });
+  } catch (err) {
+    console.error("Login error:", err.message);
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+/* ======================================================
+   JWT AUTH MIDDLEWARE
+====================================================== */
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ error: "Access token missing" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: "Invalid or expired token" });
+    }
+    req.user = user;
+    next();
+  });
+}
+
 
 /* ======================================================
    GET STUDIES FROM ORTHANC
@@ -344,48 +411,206 @@ app.post("/api/reports/upload", upload.array("images", 10), (req, res) => {
   }
 });
 
-/* ======================================================
-   SAVE OR UPDATE REPORT
-====================================================== */
+//save and update
 app.post("/api/reports/save", async (req, res) => {
   try {
-    const { study_uid, accession_number, patient_id, patient_name, modality,
-            reported_by, approved_by, status, history, findings, conclusion,
-            reportTitle, body_part, referring_doctor, image_paths } = req.body;
+    const {
+      study_uid,
+      accession_number,
+      patient_id,
+      patient_name,
+      modality,
+      reported_by,
+      approved_by,
+      status,
+      history,
+      findings,
+      conclusion,
+      reportTitle,
+      body_part,
+      referring_doctor,
+      image_paths,
+      isAddendum,
+    } = req.body;
 
     const reportContent = { history, findings, conclusion };
+    let reportId;
 
-    const reportResult = await pool.query(
-      `
-      INSERT INTO reports (
-        study_uid, accession_number, patient_id, patient_name,
-        modality, report_content, reported_by, approved_by, status,
-        report_title, body_part, referring_doctor
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-      ON CONFLICT (study_uid)
-      DO UPDATE SET
-        report_content = EXCLUDED.report_content,
-        reported_by = EXCLUDED.reported_by,
-        approved_by = EXCLUDED.approved_by,
-        status = EXCLUDED.status,
-        report_title = EXCLUDED.report_title,
-        body_part = EXCLUDED.body_part,
-        referring_doctor = EXCLUDED.referring_doctor
-      RETURNING id
-      `,
-      [study_uid, accession_number, patient_id, patient_name, modality, reportContent,
-       reported_by, approved_by, status || "Draft", reportTitle, body_part, referring_doctor]
-    );
+    /* =========================
+       ADDENDUM → ALWAYS INSERT
+    ========================== */
+    if (status === "Addendum" || isAddendum) {
+      const result = await pool.query(
+        `INSERT INTO reports (
+          study_uid, accession_number, patient_id, patient_name,
+          modality, report_content, reported_by, approved_by,
+          status, report_title, body_part, referring_doctor
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Addendum',$9,$10,$11)
+        RETURNING id`,
+        [
+          study_uid, accession_number, patient_id, patient_name,
+          modality, reportContent, reported_by, approved_by,
+          reportTitle, body_part, referring_doctor
+        ]
+      );
+      reportId = result.rows[0].id;
+    }
 
-    const reportId = reportResult.rows[0].id;
+    /* =========================
+       FINAL → UPDATE DRAFT / FINAL
+    ========================== */
+    else if (status === "Final") {
+      // 1️⃣ Try Draft first
+      const draft = await pool.query(
+        `SELECT id FROM reports
+         WHERE study_uid=$1 AND status='Draft'
+         ORDER BY updated_at DESC LIMIT 1`,
+        [study_uid]
+      );
 
-    // Handle images
-    if (Array.isArray(image_paths) && image_paths.length) {
-      await pool.query("DELETE FROM report_images WHERE report_id=$1", [reportId]);
+      if (draft.rows.length) {
+        // Draft → Final
+        const result = await pool.query(
+          `UPDATE reports
+           SET report_content=$1,
+               reported_by=$2,
+               approved_by=$3,
+               status='Final',
+               report_title=$4,
+               body_part=$5,
+               referring_doctor=$6,
+               updated_at=NOW()
+           WHERE id=$7
+           RETURNING id`,
+          [
+            reportContent,
+            reported_by,
+            approved_by,
+            reportTitle,
+            body_part,
+            referring_doctor,
+            draft.rows[0].id
+          ]
+        );
+        reportId = result.rows[0].id;
+      } else {
+        // 2️⃣ Update existing Final (no duplicate Final)
+        const final = await pool.query(
+          `SELECT id FROM reports
+           WHERE study_uid=$1 AND status='Final'
+           ORDER BY updated_at DESC LIMIT 1`,
+          [study_uid]
+        );
+
+        if (final.rows.length) {
+          const result = await pool.query(
+            `UPDATE reports
+             SET report_content=$1,
+                 reported_by=$2,
+                 approved_by=$3,
+                 report_title=$4,
+                 body_part=$5,
+                 referring_doctor=$6,
+                 updated_at=NOW()
+             WHERE id=$7
+             RETURNING id`,
+            [
+              reportContent,
+              reported_by,
+              approved_by,
+              reportTitle,
+              body_part,
+              referring_doctor,
+              final.rows[0].id
+            ]
+          );
+          reportId = result.rows[0].id;
+        } else {
+          // 3️⃣ No Draft & no Final → create Final
+          const result = await pool.query(
+            `INSERT INTO reports (
+              study_uid, accession_number, patient_id, patient_name,
+              modality, report_content, reported_by, approved_by,
+              status, report_title, body_part, referring_doctor
+            )
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Final',$9,$10,$11)
+            RETURNING id`,
+            [
+              study_uid, accession_number, patient_id, patient_name,
+              modality, reportContent, reported_by, approved_by,
+              reportTitle, body_part, referring_doctor
+            ]
+          );
+          reportId = result.rows[0].id;
+        }
+      }
+    }
+
+    /* =========================
+       DRAFT → UPDATE OR INSERT
+    ========================== */
+    else {
+      const existingDraft = await pool.query(
+        `SELECT id FROM reports
+         WHERE study_uid=$1 AND status='Draft'
+         ORDER BY updated_at DESC LIMIT 1`,
+        [study_uid]
+      );
+
+      if (existingDraft.rows.length) {
+        // UPDATE Draft
+        const result = await pool.query(
+          `UPDATE reports
+           SET report_content=$1,
+               reported_by=$2,
+               approved_by=$3,
+               report_title=$4,
+               body_part=$5,
+               referring_doctor=$6,
+               updated_at=NOW()
+           WHERE id=$7
+           RETURNING id`,
+          [
+            reportContent,
+            reported_by,
+            approved_by,
+            reportTitle,
+            body_part,
+            referring_doctor,
+            existingDraft.rows[0].id
+          ]
+        );
+        reportId = result.rows[0].id;
+      } else {
+        // INSERT Draft
+        const result = await pool.query(
+          `INSERT INTO reports (
+            study_uid, accession_number, patient_id, patient_name,
+            modality, report_content, reported_by, approved_by,
+            status, report_title, body_part, referring_doctor
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Draft',$9,$10,$11)
+          RETURNING id`,
+          [
+            study_uid, accession_number, patient_id, patient_name,
+            modality, reportContent, reported_by, approved_by,
+            reportTitle, body_part, referring_doctor
+          ]
+        );
+        reportId = result.rows[0].id;
+      }
+    }
+
+    /* =========================
+       IMAGES (replace for that row)
+    ========================== */
+    if (Array.isArray(image_paths)) {
+      await pool.query(`DELETE FROM report_images WHERE report_id=$1`, [reportId]);
       for (let i = 0; i < image_paths.length; i++) {
         await pool.query(
-          `INSERT INTO report_images (report_id, image_path, sort_order) VALUES ($1,$2,$3)`,
+          `INSERT INTO report_images (report_id, image_path, sort_order)
+           VALUES ($1,$2,$3)`,
           [reportId, image_paths[i], i + 1]
         );
       }
@@ -393,14 +618,13 @@ app.post("/api/reports/save", async (req, res) => {
 
     res.json({ success: true, reportId });
   } catch (err) {
-    console.error("Save report error:", err.message);
+    console.error("Save report error:", err);
     res.status(500).json({ error: "Failed to save report" });
   }
 });
 
-
 /* ======================================================
-   GET REPORT BY STUDY UID
+   GET REPORT BY STUDY UID (PREFETCH LOGIC)
 ====================================================== */
 app.get("/api/reports/by-study/:uid", async (req, res) => {
   try {
@@ -431,6 +655,32 @@ app.get("/api/reports/by-study/:uid", async (req, res) => {
   }
 });
 
+// POST /api/report-addendums
+app.post("/api/report-addendums", async (req, res) => {
+  const { report_id, study_uid, reason, created_by } = req.body;
+
+  // 1️⃣ Validate request
+  if (!report_id || !study_uid || !reason) {
+    return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
+
+  try {
+    // 2️⃣ Insert addendum into DB
+    const result = await pool.query(
+      `INSERT INTO report_addendums (report_id, study_uid, reason, created_by, created_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       RETURNING *`,
+      [report_id, study_uid, reason, created_by || "system"]
+    );
+
+    // 3️⃣ Return the saved addendum
+    res.json({ success: true, addendum: result.rows[0] });
+
+  } catch (err) {
+    console.error("Addendum save error:", err.message);
+    res.status(500).json({ success: false, error: "Failed to save addendum" });
+  }
+});
 
 // Get all active modalities
 app.get("/api/modalities", async (req, res) => {
