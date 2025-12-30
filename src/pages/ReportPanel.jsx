@@ -325,25 +325,34 @@ const [addendumConfirmed, setAddendumConfirmed] = useState(false);
 
 
 //report tile
+// Auto-update report title based on modality + body part
 useEffect(() => {
-  if (!isManualTitle) {
-    const modality = study.Modality || "";
-    const bodyPart = study.BodyPartExamined || "";
-    if (modality && bodyPart) {
-      setReportTitle(`${modality} ${bodyPart} REPORT`);
-    }
+  if (isManualTitle) return; // do not override manual edits
+
+  const modality = study.Modality?.trim() || "";
+  const bodyPart = study.BodyPartExamined?.trim() || "";
+
+  if (!modality) {
+    // fallback if modality is missing
+    setReportTitle("Report");
+    return;
   }
+
+  // Build title: include body part only if present
+  const title = bodyPart ? `${modality} ${bodyPart} REPORT` : `${modality} REPORT`;
+  setReportTitle(title);
 }, [study.Modality, study.BodyPartExamined, isManualTitle]);
 
 
 //voice based 
 useEffect(() => {
-  if (!("webkitSpeechRecognition" in window)) {
-    alert("Speech recognition not supported in this browser");
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert("Speech recognition is not supported in this browser.");
     return;
   }
 
-  const recognition = new window.webkitSpeechRecognition();
+  const recognition = new SpeechRecognition();
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = "en-US";
@@ -353,10 +362,21 @@ useEffect(() => {
     for (let i = event.resultIndex; i < event.results.length; i++) {
       transcript += event.results[i][0].transcript;
     }
-    setFindings(prev => prev + " " + transcript);
+
+    if (!activeEditorRef.current) return;
+
+    // Update React state only
+    const editor = activeEditorRef.current; // must be "history"/"findings"/"conclusion"
+    if (editor === "history") setHistory(prev => prev + " " + transcript);
+    else if (editor === "findings") setFindings(prev => prev + " " + transcript);
+    else if (editor === "conclusion") setConclusion(prev => prev + " " + transcript);
   };
 
+  recognition.onerror = (e) => console.error("Speech recognition error:", e);
+
   recognitionRef.current = recognition;
+
+  return () => recognition.stop();
 }, []);
 
 // template
@@ -616,6 +636,51 @@ useEffect(() => {
     setIsAddendum(true);
   }
 }, [location.state]);
+// ✅ SYNC FINAL REPORT CONTENT (IMPORTANT)
+useEffect(() => {
+  if (!studyUID) return;
+
+  const syncFinalReport = async () => {
+    try {
+      const res = await fetch(`/api/reports/by-study/${studyUID}`);
+      if (!res.ok) return;
+
+      const data = await res.json();
+      if (!data) return;
+
+      // ✅ USE FLATTENED DATA (FINAL FIX)
+      if (data.history !== undefined) setHistory(data.history);
+      if (data.findings !== undefined) setFindings(data.findings);
+      if (data.conclusion !== undefined) setConclusion(data.conclusion);
+
+      // ✅ IMAGES
+      if (Array.isArray(data.images)) {
+        const imgs = data.images.map(img =>
+          img.startsWith("http") ? img : `http://localhost:5000${img}`
+        );
+        setKeyImages(imgs);
+        setShowKeyImages(imgs.length > 0);
+      }
+
+      // ✅ STATUS + ADDENDUM
+      if (data.status) {
+        setStudy(prev => ({ ...prev, ReportStatus: data.status }));
+      }
+
+      if (data.addendum_reason) {
+        setIsAddendum(true);
+        setNoteInput(data.addendum_reason);
+        setAddendumConfirmed(true);
+      }
+
+    } catch (err) {
+      console.error("Final report sync failed", err);
+    }
+  };
+
+  syncFinalReport();
+}, [studyUID]);
+
 
   /* ===========================
         PDF export
@@ -717,11 +782,9 @@ useEffect(() => {
   /* ================
      Active editor handlers passed to RichEditor
      ================ */
-  const handleEditorFocus = (domNode) => {
-    activeEditorRef.current = domNode;
-    // save selection at focus
-    setTimeout(saveSelection, 0);
-  };
+ const handleEditorFocus = (domNode) => {
+  activeEditorRef.current = domNode.dataset.editor; 
+};
 
   const handleEditorSelectionChange = () => {
     // whenever selection inside an editor changes, capture it
@@ -758,86 +821,83 @@ useEffect(() => {
   return (
     <div className="split-layout" style={{ display: "flex", height: "100vh", position: "relative", fontFamily: "'Times New Roman', Times, serif" }}>
     
-
-      {/* Report Panel */}
-      <div
-        ref={reportRef}
-        id="reportPanel"
-        style={{
-          width: "100%",
-          padding: 12,
-          boxSizing: "border-box",
-          height: "100%",
-          overflowY: "auto",
-        }}
-      >
-     {isAddendum && (
-  <div style={{ marginBottom: 12 }}>
-    {!addendumConfirmed ? (
-      // BEFORE CONFIRM
-      <div style={{ display: "flex", gap: 8 }}>
-        <input
-          type="text"
-          placeholder="Enter addendum reason"
-          value={noteInput}
-          onChange={(e) => setNoteInput(e.target.value)}
-          style={{ padding: "4px 6px", minWidth: 250 }}
-        />
-
-        <button
-          onClick={async () => {
-            if (!noteInput.trim()) {
-              alert("Please enter a reason");
-              return;
-            }
-            if (!parentReportId) {
-              alert("Parent report not found");
-              return;
-            }
-
-            try {
-              const res = await fetch("/api/report-addendums", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  report_id: parentReportId,
-                  study_uid: studyUID,
-                  reason: noteInput,
-                  created_by: study.ReportedBy || "system",
-                }),
-              });
-
-              const data = await res.json();
-              if (data.success) {
-                setAddendumConfirmed(true); // ✅ LOCK
-              } else {
-                alert(data.error || "Failed to save reason");
+{/* Report Panel */}
+<div
+  ref={reportRef}
+  id="reportPanel"
+  style={{
+    width: "100%",
+    padding: 12,
+    boxSizing: "border-box",
+    height: "100%",
+    overflowY: "auto",
+    position: "relative", // needed for overlay
+  }}
+>{/* ====================== */}
+{/* Addendum Section */}
+{/* ====================== */}
+{isAddendum && (
+  <>
+    {/* STEP 1: Ask for reason if not yet confirmed */}
+    {!addendumConfirmed && (
+      <div style={{ marginBottom: 12, position: "relative", zIndex: 600 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input
+            type="text"
+            placeholder="Enter addendum reason"
+            value={noteInput}
+            onChange={(e) => setNoteInput(e.target.value)}
+            style={{ padding: "4px 6px", minWidth: 250 }}
+          />
+          <button
+            onClick={() => {
+              if (!noteInput.trim()) {
+                alert("Please enter a reason");
+                return;
               }
-            } catch {
-              alert("Error saving addendum");
-            }
-          }}
-        >
-          OK
-        </button>
+              setAddendumConfirmed(true); // ✅ mark as confirmed
+            }}
+          >
+            OK
+          </button>
+        </div>
       </div>
-    ) : (
-      // AFTER CONFIRM (READ-ONLY)
+    )}
+
+    {/* STEP 2: Show reason after confirmation */}
+    {addendumConfirmed && (
       <div
         style={{
           padding: "6px 8px",
           background: "#f1f3f5",
           borderLeft: "4px solid #0d6efd",
           fontSize: 13,
+          marginBottom: 12,
+          zIndex: 600,
+          position: "relative",
         }}
       >
         <strong>Addendum Reason:</strong> {noteInput}
       </div>
     )}
-  </div>
+
+    {/* Overlay to block the entire report until reason is entered */}
+    {!addendumConfirmed && (
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          backgroundColor: "rgba(255,255,255,0.6)",
+          zIndex: 500,
+          pointerEvents: "all", // block interactions
+        }}
+      />
+    )}
+  </>
 )}
-
-
         {/* Toolbar row - UPDATED BUTTONS */}
         <div className="top-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
           <div className="editor-toolbar toolbar" style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1148,22 +1208,25 @@ useEffect(() => {
   onSelectionChange={handleEditorSelectionChange}
   placeholder="Enter history..."
   disabled={isAddendum && !addendumConfirmed}
+  data-editor="history"
 />
 
         </section>
 
         {/* Findings */}
-        <section className="section" style={{ marginBottom: 20 }}>
-          <h3 style={{ fontSize: 12, marginBottom: 8 }}>Findings</h3>
-          <RichEditor
-            value={findings}
-            onChange={setFindings}
-            onFocus={handleEditorFocus}
-            onSelectionChange={handleEditorSelectionChange}
-            placeholder="Enter findings..."
-           disabled={isAddendum && !addendumConfirmed}
-          />
-        </section>
+       <section className="section" style={{ marginBottom: 20 }}>
+  <h3 style={{ fontSize: 12, marginBottom: 8 }}>Findings</h3>
+  <RichEditor
+    value={findings}
+    onChange={setFindings}
+    onFocus={handleEditorFocus}
+    onSelectionChange={handleEditorSelectionChange}
+    placeholder="Enter findings..."
+    disabled={isAddendum && !addendumConfirmed}
+    data-editor="findings"
+  />
+</section>
+
 
         {/* Key Images */}
         {showKeyImages && (
@@ -1261,20 +1324,24 @@ useEffect(() => {
         <section className="section" style={{ marginBottom: 20 }}>
           <h3 style={{ fontSize: 12, marginBottom: 8 }}>Conclusion</h3>
           <RichEditor
-            value={conclusion}
-            onChange={setConclusion}
-            onFocus={handleEditorFocus}
-            onSelectionChange={handleEditorSelectionChange}
-            placeholder="Enter conclusion..."
-            disabled={isAddendum && !addendumConfirmed}
-          />
+  value={conclusion}
+  onChange={setConclusion}
+  onFocus={handleEditorFocus}
+  onSelectionChange={handleEditorSelectionChange}
+  placeholder="Enter conclusion..."
+  disabled={isAddendum && !addendumConfirmed}
+  data-editor="conclusion"
+/>
         </section>
 
-      <footer className="footer-row" style={{ display: "flex", justifyContent: "space-between", marginTop: 30 }}>
+      {/* ====================== */}
+{/* Footer */}
+{/* ====================== */}
+<footer className="footer-row" style={{ display: "flex", justifyContent: "space-between", marginTop: 30 }}>
   <div style={{ fontWeight: "bold", fontSize: 11 }}>
     Reported By:
     <span
-      contentEditable
+      contentEditable={!(isAddendum && !addendumConfirmed)}
       suppressContentEditableWarning
       onInput={(e) => setStudy(prev => ({ ...prev, ReportedBy: e.target.textContent || "" }))}
       style={{
@@ -1282,6 +1349,8 @@ useEffect(() => {
         minWidth: 200,
         display: "inline-block",
         padding: "2px 5px",
+        backgroundColor: isAddendum && !addendumConfirmed ? "#f1f3f5" : "transparent",
+        cursor: isAddendum && !addendumConfirmed ? "not-allowed" : "text",
       }}
     >
       {study.ReportedBy}
@@ -1291,7 +1360,7 @@ useEffect(() => {
   <div style={{ fontWeight: "bold", fontSize: 11 }}>
     Approved By:
     <span
-      contentEditable
+      contentEditable={!(isAddendum && !addendumConfirmed)}
       suppressContentEditableWarning
       onInput={(e) => setStudy(prev => ({ ...prev, ApprovedBy: e.target.textContent || "" }))}
       style={{
@@ -1299,6 +1368,8 @@ useEffect(() => {
         minWidth: 200,
         display: "inline-block",
         padding: "2px 5px",
+        backgroundColor: isAddendum && !addendumConfirmed ? "#f1f3f5" : "transparent",
+        cursor: isAddendum && !addendumConfirmed ? "not-allowed" : "text",
       }}
     >
       {study.ApprovedBy}

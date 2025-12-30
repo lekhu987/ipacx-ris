@@ -5,13 +5,12 @@ import "./Dashboard.css";
 const SummaryCard = ({ title, value, onClick, selectedDate, onDateChange }) => {
   return (
     <div className="card" onClick={onClick}>
-      {/* Small date picker */}
       <input
         type="date"
         value={selectedDate}
-        onChange={(e) => onDateChange && onDateChange(e.target.value)}
+        onChange={(e) => onDateChange(e.target.value)}
         className="card-date-picker"
-        onClick={(e) => e.stopPropagation()} // prevent card click
+        onClick={(e) => e.stopPropagation()}
       />
       <div className="card-value">{value}</div>
       <div className="card-title">{title}</div>
@@ -20,60 +19,85 @@ const SummaryCard = ({ title, value, onClick, selectedDate, onDateChange }) => {
 };
 
 export default function Dashboard() {
-  const [patientsToday, setPatientsToday] = useState(0);
   const [selectedDate, setSelectedDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
 
-  // Fetch patients registered for a given date
-  const fetchPatients = (date) => {
-    fetch(`/api/patients?date=${date}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setPatientsToday(data.count || 0);
-      })
-      .catch((err) => {
-        console.error("Failed to fetch patients:", err);
-        setPatientsToday(0);
-      });
+  const [appointmentsToday, setAppointmentsToday] = useState(0);
+  const [completedReportsToday, setCompletedReportsToday] = useState(0);
+  const [pendingReportsToday, setPendingReportsToday] = useState(0);
+  const [patientsRegisteredToday, setPatientsRegisteredToday] = useState(0);
+
+  /* ---------------- Patients ---------------- */
+  const fetchPatients = async (date) => {
+    try {
+      const res = await fetch(`/api/patients?date=${date}`);
+      const data = await res.json();
+      setPatientsRegisteredToday(data.count || 0);
+    } catch {
+      setPatientsRegisteredToday(0);
+    }
   };
 
-  // Auto-fetch whenever selectedDate changes, and refresh every 5 seconds
+  /* ---------------- Reports (FIXED LOGIC) ---------------- */
+  const fetchReportsStats = async (date) => {
+    try {
+      const res = await fetch(`/api/reports?from=${date}&to=${date}`);
+      const reports = await res.json();
+
+      const draftsToday = reports.filter(
+        (r) =>
+          r.status === "Draft" &&
+          r.created_at &&
+          r.created_at.startsWith(date)
+      ).length;
+
+      const finalsToday = reports.filter(
+        (r) =>
+          r.status === "Final" &&
+          r.created_at &&
+          r.created_at.startsWith(date)
+      ).length;
+
+      setPendingReportsToday(draftsToday);
+      setCompletedReportsToday(finalsToday);
+    } catch {
+      setPendingReportsToday(0);
+      setCompletedReportsToday(0);
+    }
+  };
+
+  /* ---------------- Appointments ---------------- */
+  const fetchAppointments = async (date) => {
+    try {
+      const res = await fetch(`/api/appointments?date=${date}`);
+      const data = await res.json();
+      setAppointmentsToday(data.count || 0);
+    } catch {
+      setAppointmentsToday(0);
+    }
+  };
+
+  /* ---------------- Auto Refresh ---------------- */
   useEffect(() => {
-    fetchPatients(selectedDate);
-
-    const interval = setInterval(() => {
+    const fetchAll = () => {
       fetchPatients(selectedDate);
-    }, 5000); // 5000ms = 5 seconds
+      fetchReportsStats(selectedDate);
+      fetchAppointments(selectedDate);
+    };
 
-    return () => clearInterval(interval); // cleanup on unmount or date change
+    fetchAll(); // initial load
+
+    const interval = setInterval(fetchAll, 5000); // auto-refresh every 5 sec
+
+    return () => clearInterval(interval);
   }, [selectedDate]);
 
   const kpis = [
-    {
-      title: "Today's Appointments",
-      value: 34,
-      selectedDate: selectedDate,
-      onDateChange: (d) => setSelectedDate(d),
-    },
-    {
-      title: "Completed Reports Today",
-      value: 21,
-      selectedDate: selectedDate,
-      onDateChange: (d) => setSelectedDate(d),
-    },
-    {
-      title: "Pending Reports",
-      value: 8,
-      selectedDate: selectedDate,
-      onDateChange: (d) => setSelectedDate(d),
-    },
-    {
-      title: "Patients Registered Today",
-      value: patientsToday,
-      selectedDate: selectedDate,
-      onDateChange: (d) => setSelectedDate(d),
-    },
+    { title: "Today's Appointments", value: appointmentsToday },
+    { title: "Completed Reports Today", value: completedReportsToday },
+    { title: "Pending Reports Today", value: pendingReportsToday },
+    { title: "Patients Registered Today", value: patientsRegisteredToday },
   ];
 
   return (
@@ -91,9 +115,9 @@ export default function Dashboard() {
               key={k.title}
               title={k.title}
               value={k.value}
-              selectedDate={k.selectedDate}
-              onDateChange={k.onDateChange}
-              onClick={() => console.log(`clicked ${k.title}`)}
+              selectedDate={selectedDate}
+              onDateChange={setSelectedDate}
+              onClick={() => {}}
             />
           ))}
         </div>

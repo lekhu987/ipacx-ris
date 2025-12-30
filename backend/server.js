@@ -15,7 +15,7 @@ const bcrypt = require("bcryptjs");
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 const JWT_EXPIRES = "8h";
-
+const generateFinalReportPDF = require("./utils/generateFinalReportPDF");
 
 app.use(cors());
 app.use(express.json());
@@ -533,6 +533,7 @@ app.post("/api/reports/save", async (req, res) => {
               study_uid, accession_number, patient_id, patient_name,
               modality, report_content, reported_by, approved_by,
               status, report_title, body_part, referring_doctor
+
             )
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'Final',$9,$10,$11)
             RETURNING id`,
@@ -883,6 +884,159 @@ app.delete("/api/report-templates/:id", async (req, res) => {
   } catch (err) {
     console.error("Delete template error:", err.message);
     res.status(500).json({ error: "Failed to delete template" });
+  }
+});
+
+
+/* =========================
+   GET PDF BY REPORT ID
+========================= */
+app.get("/api/reports/:id/pdf", async (req, res) => {
+  try {
+    const reportId = req.params.id;
+
+    // We use a Subquery for addendum_reason to get the LATEST entry
+    const reportRes = await pool.query(
+      `SELECT r.*, 
+        (SELECT reason FROM report_addendums 
+         WHERE report_id = r.id 
+         ORDER BY created_at DESC LIMIT 1) AS addendum_reason 
+       FROM reports r 
+       WHERE r.id = $1`,
+      [reportId]
+    );
+
+    if (reportRes.rows.length === 0) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    const report = reportRes.rows[0];
+
+    // Fetch associated images
+    const imagesRes = await pool.query(
+      `SELECT image_path FROM report_images WHERE report_id = $1 ORDER BY sort_order`,
+      [reportId]
+    );
+
+    // Generate the PDF and wait for the file to be ready
+   const pdfPath = await generateFinalReportPDF(
+  report,
+  imagesRes.rows,
+  { printMode: false }   // 👈 VIEW MODE
+);
+
+    const absolutePdfPath = path.resolve(pdfPath);
+
+    // Serve the file
+    res.contentType("application/pdf");
+    res.sendFile(absolutePdfPath, (err) => {
+      if (err) {
+        console.error("Error sending file:", err);
+        if (!res.headersSent) res.status(500).send("Error downloading PDF");
+      }
+    });
+
+  } catch (err) {
+    console.error("PDF Route Error:", err);
+    if (!res.headersSent) res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+/* =========================
+   GET PDF BY STUDY UID (UPDATED)
+========================= */
+app.get("/api/reports/study/:studyUid/pdf", async (req, res) => {
+  try {
+    const { studyUid } = req.params;
+    const requestedType = req.query.type; 
+
+    // The subquery looks into report_addendums for the specific report_id
+    // and grabs the single most recent reason string.
+    let query = `
+      SELECT r.*, 
+        (SELECT reason 
+         FROM report_addendums 
+         WHERE report_id = r.id 
+         ORDER BY created_at DESC 
+         LIMIT 1) AS addendum_reason
+      FROM reports r
+      WHERE r.study_uid = $1
+    `;
+    const params = [studyUid];
+
+    if (requestedType) {
+      query += ` AND r.status = $2 ORDER BY r.created_at DESC LIMIT 1`;
+      params.push(requestedType);
+    } else {
+      query += ` ORDER BY (r.status = 'Addendum') DESC, r.created_at DESC LIMIT 1`;
+    }
+
+    const reportRes = await pool.query(query, params);
+    
+    if (reportRes.rows.length === 0) {
+      return res.status(404).json({ error: "No report found for this study" });
+    }
+
+    const report = reportRes.rows[0];
+    
+    // Fetch associated images
+    const imagesRes = await pool.query(
+      `SELECT image_path FROM report_images WHERE report_id = $1 ORDER BY sort_order`,
+      [report.id]
+    );
+
+    const pdfPath = await generateFinalReportPDF(
+  report,
+  imagesRes.rows,
+  { printMode: false }   // explicitly VIEW MODE
+);
+
+    res.contentType("application/pdf").sendFile(path.resolve(pdfPath));
+
+  } catch (err) {
+    console.error("Study PDF Route Error:", err);
+    res.status(500).send("Error generating PDF");
+  }
+});
+
+/* =========================
+   PRINT PDF (STATUS HIDDEN)
+========================= */
+app.get("/api/reports/:id/pdf/print", async (req, res) => {
+  try {
+    const reportId = req.params.id;
+
+    const reportRes = await pool.query(
+      `SELECT r.*, 
+        (SELECT reason FROM report_addendums 
+         WHERE report_id = r.id 
+         ORDER BY created_at DESC LIMIT 1) AS addendum_reason 
+       FROM reports r 
+       WHERE r.id = $1`,
+      [reportId]
+    );
+
+    if (!reportRes.rows.length) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    const imagesRes = await pool.query(
+      `SELECT image_path FROM report_images 
+       WHERE report_id = $1 ORDER BY sort_order`,
+      [reportId]
+    );
+
+    const pdfPath = await generateFinalReportPDF(
+      reportRes.rows[0],
+      imagesRes.rows,
+      { printMode: true }   // 🔥 STATUS HIDDEN
+    );
+
+    res.contentType("application/pdf");
+    res.sendFile(path.resolve(pdfPath));
+  } catch (err) {
+    console.error("Print PDF error:", err);
+    res.status(500).send("Error generating print PDF");
   }
 });
 
