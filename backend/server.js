@@ -6,27 +6,37 @@ const { Pool } = require("pg");
 const fs = require("fs");
 const path = require("path");
 const multer = require("multer");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcryptjs");
-
-const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET is not set");
+}
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES = "8h";
+
+// Utils
 const generateFinalReportPDF = require("./utils/generateFinalReportPDF");
 
-app.use(cors());
+// Middleware
+app.use(cors({
+  origin: 'http://localhost:3000',  // frontend URL
+  credentials: true                 // allow cookies
+}));
 app.use(express.json());
 app.use(
   "/uploads/report_images",
   express.static(path.join(__dirname, "uploads/report_images"))
 );
+app.use(cookieParser());
 
-/* ======================================================
-   PostgreSQL CONNECTION
-====================================================== */
+// ======================================================
+// PostgreSQL CONNECTION
+// ======================================================
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || "localhost",
   port: process.env.POSTGRES_PORT || 5432,
@@ -35,18 +45,18 @@ const pool = new Pool({
   database: process.env.POSTGRES_DB || "RIS",
 });
 
-/* ======================================================
-   ORTHANC CONNECTION CONFIG
-====================================================== */
+// ======================================================
+// ORTHANC CONNECTION CONFIG
+// ======================================================
 const ORTHANC_URL = (process.env.ORTHANC_URL || "http://192.168.1.34:8042/").replace(/\/?$/, "/");
 const ORTHANC_AUTH = {
   username: process.env.ORTHANC_USER || "lekhana",
   password: process.env.ORTHANC_PASS || "lekhana",
 };
 
-/* ======================================================
-   AGE PARSER FROM PatientName
-====================================================== */
+// ======================================================
+// Helper: Extract age from patient name
+// ======================================================
 function extractAgeFromName(name) {
   if (!name) return "N/A";
   const ageMatch = name.match(/(\d{1,3})\s*Y/i);
@@ -56,65 +66,208 @@ function extractAgeFromName(name) {
   return "N/A";
 }
 
-/* ======================================================
-   AUTH LOGIN
-====================================================== */
-app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body;
-
-    if (!username || !password) {
-      return res.status(400).json({ error: "Username and password required" });
-    }
-
-    // 🔐 TEMP: hardcoded user (can move to DB later)
-    const USER = {
-      username: "admin",
-      password: "admin123", // later store hashed password
-      role: "ADMIN"
-    };
-
-    if (username !== USER.username || password !== USER.password) {
-      return res.status(401).json({ error: "Invalid username or password" });
-    }
-
-    const token = jwt.sign(
-      { username: USER.username, role: USER.role },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES }
-    );
-
-    res.json({
-      success: true,
-      token,
-      user: { username: USER.username, role: USER.role }
-    });
-  } catch (err) {
-    console.error("Login error:", err.message);
-    res.status(500).json({ error: "Login failed" });
-  }
-});
-
-/* ======================================================
-   JWT AUTH MIDDLEWARE
-====================================================== */
+// ======================================================
+// JWT Authentication Middleware
+// ======================================================
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-
+  const token = req.cookies.accessToken || (req.headers["authorization"] && req.headers["authorization"].split(" ")[1]);
   if (!token) {
-    return res.status(401).json({ error: "Access token missing" });
+    return res.status(401).json({ error: "Token missing" });
   }
-
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) {
-      return res.status(403).json({ error: "Invalid or expired token" });
-    }
+    if (err) return res.status(403).json({ error: "Invalid or expired token" });
     req.user = user;
     next();
   });
 }
 
+// ======================================================
+// Role Authorization Middleware
+// ======================================================
+function authorizeRoles(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+    next();
+  };
+}
+
+// ======================================================
+// AUTH: Login
+// ======================================================
+app.post("/api/login", async (req, res) => {
+  const { username, password } = req.body;
+
+  const result = await pool.query(
+    "SELECT * FROM users WHERE username=$1 AND is_active=true",
+    [username]
+  );
+  if (!result.rows.length) return res.status(401).json({ error: "Invalid credentials" });
+
+  const user = result.rows[0];
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+
+  const accessToken = jwt.sign(
+    { id: user.id, username: user.username, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES }
+  );
+
+  res
+    .cookie("accessToken", accessToken, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: false // true if using HTTPS
+    })
+    .json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
+});
+
+// ======================================================
+// AUTH: Get logged-in user
+// ======================================================
+app.get("/api/auth/me", authenticateToken, (req, res) => {
+  res.json({
+    id: req.user.id,
+    username: req.user.username,
+    role: req.user.role
+  });
+});
+
+// ======================================================
+// AUTH: Change Password
+// ======================================================
+app.put("/api/auth/change-password", authenticateToken, async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: "Old & new password required" });
+  }
+
+  const result = await pool.query(
+    "SELECT password_hash FROM users WHERE id=$1",
+    [req.user.id]
+  );
+  const valid = await bcrypt.compare(oldPassword, result.rows[0].password_hash);
+  if (!valid) return res.status(401).json({ error: "Old password incorrect" });
+
+  const hash = await bcrypt.hash(newPassword, 10);
+  await pool.query(
+    "UPDATE users SET password_hash=$1 WHERE id=$2",
+    [hash, req.user.id]
+  );
+
+  res.json({ success: true });
+});
+
+// ======================================================
+// USERS: Create user (ADMIN only)
+// ======================================================
+// USERS: Create user (ADMIN only)
+app.post("/api/users", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
+  const { username, password, role, email } = req.body;
+  if (!username || !password || !role || !email) {
+    return res.status(400).json({ error: "All fields required" });
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO users (username, password_hash, role, email)
+       VALUES ($1,$2,$3,$4)
+       RETURNING id, username, email, role, is_active`,
+      [username, hash, role, email]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Create user error:", err);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+
+// ======================================================
+// USERS: Toggle active/inactive (ADMIN only)
+// ======================================================
+app.put("/api/users/:id/toggle", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
+  const result = await pool.query(
+    `UPDATE users
+     SET is_active = NOT is_active
+     WHERE id=$1
+     RETURNING id, is_active`,
+    [req.params.id]
+  );
+
+  res.json(result.rows[0]);
+});
+
+// ======================================================
+// STUDIES: Get studies (ADMIN + RADIOLOGIST)
+// ======================================================
+app.get("/api/studies", authenticateToken, authorizeRoles("ADMIN", "RADIOLOGIST"), async (req, res) => {
+  const result = await pool.query(
+    "SELECT * FROM studies ORDER BY study_date DESC"
+  );
+  res.json(result.rows);
+});
+
+// GET all users (ADMIN only)
+app.get("/api/users", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, username, email, role, is_active, created_at
+       FROM users
+       ORDER BY id ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error("Fetch users error:", err.message);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+// Update user (ADMIN only)
+app.put("/api/users/:id", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
+  const { username, password, role, email } = req.body;
+  const { id } = req.params;
+
+  try {
+    let query = `UPDATE users SET username=$1, role=$2, email=$3`;
+    const values = [username, role, email, id];
+
+    if (password) {
+      const hash = await bcrypt.hash(password, 10);
+      query += `, password_hash=$4 WHERE id=$5 RETURNING id, username, email, role, is_active`;
+      values[3] = hash;
+      values[4] = id;
+    } else {
+      query += ` WHERE id=$4 RETURNING id, username, email, role, is_active`;
+    }
+
+    const result = await pool.query(query, values);
+    if (!result.rows.length) return res.status(404).json({ error: "User not found" });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Update user error:", err);
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+// Delete user (ADMIN only)
+app.delete("/api/users/:id", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      "DELETE FROM users WHERE id=$1 RETURNING id, username",
+      [id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: "User not found" });
+    res.json({ success: true, deleted: result.rows[0] });
+  } catch (err) {
+    console.error("Delete user error:", err);
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
 
 /* ======================================================
    GET STUDIES FROM ORTHANC
@@ -1037,6 +1190,41 @@ app.get("/api/reports/:id/pdf/print", async (req, res) => {
   } catch (err) {
     console.error("Print PDF error:", err);
     res.status(500).send("Error generating print PDF");
+  }
+});
+
+app.post("/api/pacs/save", async (req, res) => {
+  try {
+    const { id, pacs_name, ae_title, ip_address, port, protocol, username, password, is_active } = req.body;
+    if (!pacs_name || !ip_address || !port) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    let result;
+    if (id) {
+      // Update existing
+      result = await pool.query(
+        `UPDATE pacs_config
+         SET pacs_name=$1, ae_title=$2, ip_address=$3, port=$4, protocol=$5, username=$6, password=$7, is_active=$8
+         WHERE id=$9
+         RETURNING *`,
+        [pacs_name, ae_title, ip_address, port, protocol, username, password, is_active, id]
+      );
+    } else {
+      // Insert new
+      result = await pool.query(
+        `INSERT INTO pacs_config 
+          (pacs_name, ae_title, ip_address, port, protocol, username, password, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING *`,
+        [pacs_name, ae_title, ip_address, port, protocol, username, password, is_active]
+      );
+    }
+
+    res.json({ success: true, pacs: result.rows[0] });
+  } catch (err) {
+    console.error("Save PACS error:", err.message);
+    res.status(500).json({ error: "Failed to save PACS config" });
   }
 });
 

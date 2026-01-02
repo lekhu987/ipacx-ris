@@ -1,22 +1,24 @@
 // src/layout/MainLayout.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
 import "./MainLayout.css";
 
 function MainLayout({ children }) {
   const [showAdminMenu, setShowAdminMenu] = useState(false);
-  const [showLogout, setShowLogout] = useState(false);
+  const [showUserInfo, setShowUserInfo] = useState(false);
   const navigate = useNavigate();
 
-  // ✅ Get logged-in user
-  const user = JSON.parse(localStorage.getItem("user"));
+  const { user, logout } = useAuth();
   const username = user?.username || "User";
-  const role = user?.role;
+  const role = user?.role || "N/A";
+  const tokenExpiry = user?.tokenExpiry
+    ? new Date(user.tokenExpiry).toLocaleString()
+    : "N/A";
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    navigate("/login");
+    logout(); // clears user from context
+    navigate("/"); // go to login page
   };
 
   return (
@@ -34,7 +36,7 @@ function MainLayout({ children }) {
         <Link to="/reporting">Reporting</Link>
         <Link to="/inventory">Inventory</Link>
 
-        {/* ✅ ADMIN SETTINGS (only ADMIN sees this) */}
+        {/* ADMIN SETTINGS (only ADMIN sees this) */}
         {role === "ADMIN" && (
           <>
             <div
@@ -55,14 +57,28 @@ function MainLayout({ children }) {
           </>
         )}
 
-        {/* USERNAME + LOGOUT */}
+        {/* USERNAME CLICK TO SHOW ROLE & TOKEN */}
         <div
           className="bottom-username"
-          onClick={() => setShowLogout(!showLogout)}
+          onClick={() => setShowUserInfo(!showUserInfo)}
+          style={{ cursor: "pointer" }}
         >
-          {username}
-          {showLogout && (
-            <button onClick={handleLogout}>Logout</button>
+          <div>{username}</div>
+
+          {showUserInfo && (
+            <div className="user-info" style={{ marginTop: "5px", fontSize: "0.85rem", color: "#0b0909ff" }}>
+              <div>Role: {role}</div>
+              <div>Token expires: {tokenExpiry}</div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleLogout();
+                }}
+                style={{ marginTop: "5px" }}
+              >
+                Logout
+              </button>
+            </div>
           )}
         </div>
       </div>

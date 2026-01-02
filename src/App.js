@@ -9,11 +9,13 @@ import PatientList from "./pages/PatientList";
 import AddPatient from "./pages/AddPatient";
 import CreateReport from "./pages/CreateReport";
 import ReportingPage from "./pages/ReportingPage";
-import ReportPanelPage from "./pages/ReportPanel";  
+import ReportPanelPage from "./pages/ReportPanel";
 import MWLS from "./pages/MWLS";
 import TemplateManagement from "./pages/adminsettings/TemplateManagement";
 import UserManagement from "./pages/adminsettings/UserManagement";
+import PacsManagement from "./pages/adminsettings/PacsManagement";
 
+import ProtectedRoute from "./components/ProtectedRoute";
 
 // Context
 import { StudiesProvider } from "./context/StudiesContext";
@@ -23,32 +25,103 @@ function App() {
     <Router>
       <StudiesProvider>
         <Routes>
-          {/* Public/Login */}
+          {/* Public/Login route */}
           <Route path="/" element={<Login />} />
 
-          {/* Main app routes */}
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/scheduling" element={<Scheduling />} />
-          <Route path="/patientlist" element={<PatientList />} />
-          <Route path="/add-patient" element={<AddPatient />} />
-          <Route path="/create-report" element={<CreateReport />} />
-          <Route path="/reporting" element={<ReportingPage />} />
-          <Route path="/mwls" element={<MWLS />} />
-          <Route path="/report-panel" element={<ReportPanelPage />} />
-
-          {/* Admin settings routes */}
+          {/* Protected routes - any logged-in user */}
           <Route
-  path="/admin/templates"
-  element={<TemplateManagement />}
-/>
-<Route
-  path="/admin/user-management"
-  element={<UserManagement />}
-/>
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/scheduling"
+            element={
+              <ProtectedRoute>
+                <Scheduling />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/patientlist"
+            element={
+              <ProtectedRoute>
+                <PatientList />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/add-patient"
+            element={
+              <ProtectedRoute>
+                <AddPatient />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/create-report"
+            element={
+              <ProtectedRoute>
+                <CreateReport />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reporting"
+            element={
+              <ProtectedRoute>
+                <ReportingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/mwls"
+            element={
+              <ProtectedRoute>
+                <MWLS />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/report-panel"
+            element={
+              <ProtectedRoute>
+                <ReportPanelPage />
+              </ProtectedRoute>
+            }
+          />
 
-          
+          {/* Admin routes - only ADMIN role */}
+          <Route
+            path="/admin/templates"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <TemplateManagement />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/user-management"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <UserManagement />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/pacs-management"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <PacsManagement />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Redirect unknown routes */}
-          <Route path="*" element={<Navigate to="/scheduling" />} />
+          <Route path="*" element={<Navigate to="/scheduling" replace />} />
         </Routes>
       </StudiesProvider>
     </Router>
