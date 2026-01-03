@@ -39,35 +39,51 @@ export default function PatientList() {
   const [filterToDate, setFilterToDate] = useState("");
   const [filterModality, setFilterModality] = useState("");
   const [sortDir, setSortDir] = useState("asc");
+const TODAY_FILTER_KEY = "patientlist_auto_today_applied";
 
-  // Track if user manually changed the date
-  const userChangedDate = useRef(false);
 
   // Only apply today’s filter on **first login** / first load
-  useEffect(() => {
-    if (!loading && studies.length > 0 && !userChangedDate.current && !filterFromDate) {
-      const today = todayYYYYMMDD();
-      setVisibleStudies(studies.filter((s) => s.StudyDate === today));
-      setFilterFromDate(new Date().toISOString().split("T")[0]);
-      setFilterToDate(new Date().toISOString().split("T")[0]);
-    }
-  }, [studies, loading, filterFromDate]);
+ useEffect(() => {
+  if (loading || studies.length === 0) return;
 
-  // Handle Study Date change
-  function handleDateChange(e) {
-    const v = e.target.value;
-    userChangedDate.current = true; // mark user has changed date
+  const alreadyApplied = localStorage.getItem(TODAY_FILTER_KEY);
 
-    if (!v) {
-      setVisibleStudies(studies);
-    } else {
-      setVisibleStudies(studies.filter((s) => s.StudyDate === dateInputToYYYYMMDD(v)));
-    }
+  if (!alreadyApplied) {
+    const today = todayYYYYMMDD();
 
-    setFilterFromDate(v);
-    setFilterToDate(v);
-    setCurrentPage(1);
+    setVisibleStudies(studies.filter((s) => s.StudyDate === today));
+    setFilterFromDate(new Date().toISOString().split("T")[0]);
+    setFilterToDate(new Date().toISOString().split("T")[0]);
+
+    localStorage.setItem(TODAY_FILTER_KEY, "true");
+  } else {
+    // Always show ALL studies
+    setVisibleStudies(studies);
   }
+}, [studies, loading]);
+function handleDateChange(e) {
+  const v = e.target.value;
+
+  // User cleared date → show ALL studies forever
+  if (!v) {
+    setVisibleStudies(studies);
+    setFilterFromDate("");
+    setFilterToDate("");
+
+    localStorage.setItem(TODAY_FILTER_KEY, "true");
+    setCurrentPage(1);
+    return;
+  }
+
+  // User selected a date
+  setVisibleStudies(
+    studies.filter((s) => s.StudyDate === dateInputToYYYYMMDD(v))
+  );
+  setFilterFromDate(v);
+  setFilterToDate(v);
+  setCurrentPage(1);
+}
+
 
   // Quick helper: open AddPatient prefilled
   function openAddPatientPrefill(study) {

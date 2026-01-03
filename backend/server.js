@@ -202,15 +202,6 @@ app.put("/api/users/:id/toggle", authenticateToken, authorizeRoles("ADMIN"), asy
   res.json(result.rows[0]);
 });
 
-// ======================================================
-// STUDIES: Get studies (ADMIN + RADIOLOGIST)
-// ======================================================
-app.get("/api/studies", authenticateToken, authorizeRoles("ADMIN", "RADIOLOGIST"), async (req, res) => {
-  const result = await pool.query(
-    "SELECT * FROM studies ORDER BY study_date DESC"
-  );
-  res.json(result.rows);
-});
 
 // GET all users (ADMIN only)
 app.get("/api/users", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
