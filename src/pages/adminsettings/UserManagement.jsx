@@ -9,6 +9,8 @@ function UserManagement() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [formKey, setFormKey] = useState(0);
+
 
   // Form state for Add/Edit
   const [form, setForm] = useState({
@@ -22,7 +24,15 @@ function UserManagement() {
   const [saving, setSaving] = useState(false);
 
   // Roles list
-  const ROLES = ["ADMIN", "RADIOLOGIST", "TECHNICIAN"];
+ const ROLES = [
+  "ADMIN",
+  "RADIOLOGIST",
+  "TECHNICIAN",
+  "RECEPTIONIST",
+  "NURSE",
+  "SUPERVISOR",
+];
+
 
   // Fetch users
   const fetchUsers = async () => {
@@ -139,24 +149,34 @@ function UserManagement() {
     <MainLayout>
       <div style={{ padding: "0px" }}>
         <h2>User Management</h2>
+<button
+  onClick={() => {
+    setFormKey((k) => k + 1);   // 🔥 force remount
+    setForm({
+      id: null,
+      username: "",
+      email: "",
+      password: "",
+      role: "",
+    });
+    setShowForm(true);
+  }}
+>
+  + Add User
+</button>
 
-        <button
-          onClick={() => setShowForm(true)}
-          style={{ padding: "6px 12px", marginBottom: "10px", cursor: "pointer" }}
-        >
-          + Add User
-        </button>
+{showForm && (
+  <form
+    key={formKey}  
+    onSubmit={saveUser}
+    style={{
+      border: "1px solid #ccc",
+      padding: "10px",
+      marginBottom: "15px",
+      borderRadius: "6px",
+    }}
+  >
 
-        {showForm && (
-          <form
-            onSubmit={saveUser}
-            style={{
-              border: "1px solid #ccc",
-              padding: "10px",
-              marginBottom: "15px",
-              borderRadius: "6px",
-            }}
-          >
             <input
               type="text"
               placeholder="Username"
@@ -179,16 +199,26 @@ function UserManagement() {
               style={{ marginRight: "10px", padding: "4px" }}
             />
             <select
-              value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
-              style={{ marginRight: "10px", padding: "4px" }}
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+  value={form.role}
+  onChange={(e) => setForm({ ...form, role: e.target.value })}
+  required
+  style={{
+    marginRight: "10px",
+    padding: "4px",
+    height: "28px",        // match input height
+  }}
+>
+  <option value="" disabled>
+    -- Select Role --
+  </option>
+
+  {ROLES.map((r) => (
+    <option key={r} value={r}>
+      {r}
+    </option>
+  ))}
+</select>
+
             <button type="submit" style={{ marginRight: "5px", padding: "4px 8px" }} disabled={saving}>
               {saving ? "Saving..." : form.id ? "Update" : "Add"}
             </button>

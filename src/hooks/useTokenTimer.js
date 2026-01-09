@@ -19,7 +19,7 @@ export default function useTokenTimer() {
 
       if (remaining === "Expired") {
         localStorage.removeItem("token");
-        localStorage.removeItem("token_expiry");
+        //localStorage.removeItem("token_expiry");
         navigate("/login"); // redirect to login
         return;
       }

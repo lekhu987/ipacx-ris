@@ -1,50 +1,37 @@
 const express = require("express");
-const { authenticate, authorize } = require("../middleware/auth"); // use improved middleware
-const pool = require("../db");
-
 const router = express.Router();
+const pool = require("../db");
+const bcrypt = require("bcrypt");
+const { authenticateToken, authorizeRoles } = require("../middleware/authMiddleware");
 
-/**
- * GET ALL USERS (ADMIN ONLY)
- */
-router.get("/", authenticate, authorize("ADMIN"), async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT id, username, email, role, is_active FROM users ORDER BY id"
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error("Error fetching users:", err.message);
-    res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
+// CREATE USER (ADMIN)
+router.post(
+  "/",
+  authenticateToken,
+  authorizeRoles("ADMIN"),
+  async (req, res) => {
+    const { username, password, email, role } = req.body;
 
-/**
- * GET SINGLE USER (OPTIONAL: any logged-in user)
- */
-router.get("/:id", authenticate, async (req, res) => {
-  const { id } = req.params;
-
-  // Only allow ADMIN or the user themselves
-  if (req.user.role !== "ADMIN" && req.user.id != id) {
-    return res.status(403).json({ error: "Access denied" });
-  }
-
-  try {
-    const result = await pool.query(
-      "SELECT id, username, email, role, is_active FROM users WHERE id = $1",
-      [id]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ error: "User not found" });
+    if (!username || !password || !email || !role) {
+      return res.status(400).json({ message: "All fields required" });
     }
 
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error("Error fetching user:", err.message);
-    res.status(500).json({ error: "Failed to fetch user" });
+    try {
+      const hash = await bcrypt.hash(password, 10);
+
+      const result = await pool.query(
+        `INSERT INTO users (username, password_hash, email, role)
+         VALUES ($1,$2,$3,$4)
+         RETURNING id, username, email, role, is_active`,
+        [username, hash, email, role]
+      );
+
+      res.status(201).json(result.rows[0]);
+    } catch (err) {
+      console.error("Create user error:", err.message);
+      res.status(500).json({ message: "Server error" });
+    }
   }
-});
+);
 
 module.exports = router;

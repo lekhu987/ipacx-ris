@@ -2,7 +2,7 @@
 import React, { useContext, useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import MainLayout from "../layout/MainLayout";
-import "./PatientList.css";
+import "./PACSpage.css";
 import { StudiesContext } from "../context/StudiesContext";
 
 // Helper to get today in YYYYMMDD
@@ -46,7 +46,7 @@ const TODAY_FILTER_KEY = "patientlist_auto_today_applied";
  useEffect(() => {
   if (loading || studies.length === 0) return;
 
-  const alreadyApplied = localStorage.getItem(TODAY_FILTER_KEY);
+  const alreadyApplied = sessionStorage.getItem(TODAY_FILTER_KEY);
 
   if (!alreadyApplied) {
     const today = todayYYYYMMDD();
@@ -55,27 +55,26 @@ const TODAY_FILTER_KEY = "patientlist_auto_today_applied";
     setFilterFromDate(new Date().toISOString().split("T")[0]);
     setFilterToDate(new Date().toISOString().split("T")[0]);
 
-    localStorage.setItem(TODAY_FILTER_KEY, "true");
+    sessionStorage.setItem(TODAY_FILTER_KEY, "true");
   } else {
-    // Always show ALL studies
+    // user already interacted → keep ALL
     setVisibleStudies(studies);
   }
 }, [studies, loading]);
+
 function handleDateChange(e) {
   const v = e.target.value;
 
-  // User cleared date → show ALL studies forever
+  // Clear date → show ALL (session only)
   if (!v) {
     setVisibleStudies(studies);
     setFilterFromDate("");
     setFilterToDate("");
-
-    localStorage.setItem(TODAY_FILTER_KEY, "true");
     setCurrentPage(1);
     return;
   }
 
-  // User selected a date
+  // Select specific date
   setVisibleStudies(
     studies.filter((s) => s.StudyDate === dateInputToYYYYMMDD(v))
   );
@@ -83,7 +82,6 @@ function handleDateChange(e) {
   setFilterToDate(v);
   setCurrentPage(1);
 }
-
 
   // Quick helper: open AddPatient prefilled
   function openAddPatientPrefill(study) {

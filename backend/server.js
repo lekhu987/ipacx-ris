@@ -93,35 +93,62 @@ function authorizeRoles(...roles) {
   };
 }
 
-// ======================================================
-// AUTH: Login
-// ======================================================
+// login route
 app.post("/api/login", async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  const result = await pool.query(
-    "SELECT * FROM users WHERE username=$1 AND is_active=true",
-    [username]
-  );
-  if (!result.rows.length) return res.status(401).json({ error: "Invalid credentials" });
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username & password required" });
+    }
+    const result = await pool.query(
+      `
+      SELECT id, username, role, password_hash, is_active
+      FROM users
+      WHERE username = $1
+      `,
+      [username]
+    );
 
-  const user = result.rows[0];
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+    if (!result.rows.length) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
-  const accessToken = jwt.sign(
-    { id: user.id, username: user.username, role: user.role },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES }
-  );
+    const user = result.rows[0];
 
-  res
-    .cookie("accessToken", accessToken, {
-      httpOnly: true,
-      sameSite: "strict",
-      secure: false // true if using HTTPS
-    })
-    .json({ success: true, user: { id: user.id, username: user.username, role: user.role } });
+    // 🚫 inactive user
+    if (!user.is_active) {
+      return res.status(403).json({
+        message: "Account is disabled. Contact admin."
+      });
+    }
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const accessToken = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: JWT_EXPIRES }
+    );
+
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+      },
+      accessToken,
+      expiresAt,
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Internal server error" });
+  }
 });
 
 // ======================================================
@@ -160,9 +187,6 @@ app.put("/api/auth/change-password", authenticateToken, async (req, res) => {
   res.json({ success: true });
 });
 
-// ======================================================
-// USERS: Create user (ADMIN only)
-// ======================================================
 // USERS: Create user (ADMIN only)
 app.post("/api/users", authenticateToken, authorizeRoles("ADMIN"), async (req, res) => {
   const { username, password, role, email } = req.body;
@@ -260,6 +284,8 @@ app.delete("/api/users/:id", authenticateToken, authorizeRoles("ADMIN"), async (
   }
 });
 
+
+
 /* ======================================================
    GET STUDIES FROM ORTHANC
 ====================================================== */
@@ -311,9 +337,7 @@ app.get("/api/studies", async (req, res) => {
   }
 });
 
-/* ======================================================
-   MWL ROUTES
-====================================================== */
+
 // Add MWL
 app.post("/api/mwl", async (req, res) => {
   try {
@@ -438,6 +462,77 @@ app.post("/api/mwl/:id/send", async (req, res) => {
   } catch (err) {
     console.error("Send error:", err.response?.data || err.message);
     res.status(500).json({ error: "Failed to send MWL", details: err.response?.data || err.message });
+  }
+});
+
+/* ======================================================
+   GET STUDY + REPORT BY STUDY UID (FOR PREFILL)
+====================================================== */
+app.get("/api/study-report/:uid", authenticateToken, async (req, res) => {
+  try {
+    const { uid } = req.params;
+
+    // 1️⃣ Fetch study info
+    const studyRes = await pool.query(
+      `SELECT * FROM studies WHERE study_uid=$1`,
+      [uid]
+    );
+
+    if (!studyRes.rows.length) {
+      return res.status(404).json({ error: "Study not found" });
+    }
+    const study = studyRes.rows[0];
+
+    // 2️⃣ Fetch latest report (Draft / Final / Addendum)
+    const reportRes = await pool.query(
+      `
+      SELECT r.*, 
+        (SELECT reason FROM report_addendums 
+         WHERE report_id = r.id 
+         ORDER BY created_at DESC LIMIT 1) AS addendum_reason
+      FROM reports r
+      WHERE r.study_uid = $1
+      ORDER BY 
+        (r.status = 'Addendum') DESC,
+        r.created_at DESC
+      LIMIT 1
+      `,
+      [uid]
+    );
+
+    const report = reportRes.rows.length ? reportRes.rows[0] : null;
+
+    // 3️⃣ Fetch report images if report exists
+    let images = [];
+    if (report) {
+      const imagesRes = await pool.query(
+        `SELECT image_path, image_type, sort_order 
+         FROM report_images 
+         WHERE report_id=$1 
+         ORDER BY sort_order`,
+        [report.id]
+      );
+      images = imagesRes.rows;
+    }
+
+    // 4️⃣ Return combined data
+    res.json({
+      study,
+      report: report
+        ? {
+            ...report,
+            report_content: report.report_content,
+            report_title: report.report_title,
+            body_part: report.body_part,
+            referring_doctor: report.referring_doctor,
+            images
+          }
+        : null
+    });
+
+  } catch (err) {
+    console.error("Study-Report fetch error:", err);
+    res.status(500).json({ error: "Failed to fetch study and report data" });
   }
 });
 
@@ -1173,7 +1268,7 @@ app.get("/api/reports/:id/pdf/print", async (req, res) => {
     const pdfPath = await generateFinalReportPDF(
       reportRes.rows[0],
       imagesRes.rows,
-      { printMode: true }   // 🔥 STATUS HIDDEN
+      { printMode: true }
     );
 
     res.contentType("application/pdf");
@@ -1183,42 +1278,6 @@ app.get("/api/reports/:id/pdf/print", async (req, res) => {
     res.status(500).send("Error generating print PDF");
   }
 });
-
-app.post("/api/pacs/save", async (req, res) => {
-  try {
-    const { id, pacs_name, ae_title, ip_address, port, protocol, username, password, is_active } = req.body;
-    if (!pacs_name || !ip_address || !port) {
-      return res.status(400).json({ error: "Missing required fields" });
-    }
-
-    let result;
-    if (id) {
-      // Update existing
-      result = await pool.query(
-        `UPDATE pacs_config
-         SET pacs_name=$1, ae_title=$2, ip_address=$3, port=$4, protocol=$5, username=$6, password=$7, is_active=$8
-         WHERE id=$9
-         RETURNING *`,
-        [pacs_name, ae_title, ip_address, port, protocol, username, password, is_active, id]
-      );
-    } else {
-      // Insert new
-      result = await pool.query(
-        `INSERT INTO pacs_config 
-          (pacs_name, ae_title, ip_address, port, protocol, username, password, is_active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-         RETURNING *`,
-        [pacs_name, ae_title, ip_address, port, protocol, username, password, is_active]
-      );
-    }
-
-    res.json({ success: true, pacs: result.rows[0] });
-  } catch (err) {
-    console.error("Save PACS error:", err.message);
-    res.status(500).json({ error: "Failed to save PACS config" });
-  }
-});
-
 /* ======================================================
    START SERVER
 ====================================================== */

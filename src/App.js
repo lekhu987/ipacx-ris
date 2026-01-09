@@ -1,11 +1,10 @@
 // src/App.js
 import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
-
 import Login from "./components/Login/login";
 import Dashboard from "./pages/Dashboard";
 import Scheduling from "./pages/Scheduling";
-import PatientList from "./pages/PatientList";
+import PACSpage from "./pages/PACSpage"; // Make sure the file exists as PACSpage.jsx
 import AddPatient from "./pages/AddPatient";
 import CreateReport from "./pages/CreateReport";
 import ReportingPage from "./pages/ReportingPage";
@@ -28,97 +27,21 @@ function App() {
           {/* Public/Login route */}
           <Route path="/" element={<Login />} />
 
-          {/* Protected routes - any logged-in user */}
-          <Route
-            path="/dashboard"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/scheduling"
-            element={
-              <ProtectedRoute>
-                <Scheduling />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/patientlist"
-            element={
-              <ProtectedRoute>
-                <PatientList />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/add-patient"
-            element={
-              <ProtectedRoute>
-                <AddPatient />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/create-report"
-            element={
-              <ProtectedRoute>
-                <CreateReport />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/reporting"
-            element={
-              <ProtectedRoute>
-                <ReportingPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/mwls"
-            element={
-              <ProtectedRoute>
-                <MWLS />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/report-panel"
-            element={
-              <ProtectedRoute>
-                <ReportPanelPage />
-              </ProtectedRoute>
-            }
-          />
+          {/* Protected routes */}
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/scheduling" element={<ProtectedRoute><Scheduling /></ProtectedRoute>} />
+          <Route path="/pacspage" element={<ProtectedRoute><PACSpage /></ProtectedRoute>} /> {/* FIXED */}
 
-          {/* Admin routes - only ADMIN role */}
-          <Route
-            path="/admin/templates"
-            element={
-              <ProtectedRoute roles={['ADMIN']}>
-                <TemplateManagement />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/user-management"
-            element={
-              <ProtectedRoute roles={['ADMIN']}>
-                <UserManagement />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/admin/pacs-management"
-            element={
-              <ProtectedRoute roles={['ADMIN']}>
-                <PacsManagement />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/add-patient" element={<ProtectedRoute><AddPatient /></ProtectedRoute>} />
+          <Route path="/create-report" element={<ProtectedRoute><CreateReport /></ProtectedRoute>} />
+          <Route path="/reporting" element={<ProtectedRoute><ReportingPage /></ProtectedRoute>} />
+          <Route path="/mwls" element={<ProtectedRoute><MWLS /></ProtectedRoute>} />
+          <Route path="/report-panel" element={<ProtectedRoute><ReportPanelPage /></ProtectedRoute>} />
+
+          {/* Admin routes */}
+          <Route path="/admin/templates" element={<ProtectedRoute roles={['ADMIN']}><TemplateManagement /></ProtectedRoute>} />
+          <Route path="/admin/user-management" element={<ProtectedRoute roles={['ADMIN']}><UserManagement /></ProtectedRoute>} />
+          <Route path="/admin/pacs-management" element={<ProtectedRoute roles={['ADMIN']}><PacsManagement /></ProtectedRoute>} />
 
           {/* Redirect unknown routes */}
           <Route path="*" element={<Navigate to="/scheduling" replace />} />

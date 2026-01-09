@@ -1,6 +1,4 @@
 const jwt = require("jsonwebtoken");
-
-// Generate JWT Access Token (short-lived)
 const generateAccessToken = (user) => {
   return jwt.sign(
     { id: user.id, role: user.role },
@@ -8,8 +6,6 @@ const generateAccessToken = (user) => {
     { expiresIn: "15m" }
   );
 };
-
-// Generate JWT Refresh Token (long-lived)
 const generateRefreshToken = (user) => {
   return jwt.sign(
     { id: user.id },
@@ -17,20 +13,14 @@ const generateRefreshToken = (user) => {
     { expiresIn: "7d" }
   );
 };
-
-// LOGIN controller
 exports.login = async (req, res) => {
   try {
-    const user = req.user; // user verified by middleware
-
+    const user = req.user; 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
-
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
-
-    // Optional: send refresh token as HTTP-only cookie
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production", // HTTPS only in prod

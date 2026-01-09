@@ -30,7 +30,7 @@ function MainLayout({ children }) {
         {/* Main Menu */}
         <Link to="/dashboard">Dashboard</Link>
         <Link to="/scheduling">Scheduling</Link>
-        <Link to="/patientlist">Patient List</Link>
+       <Link to="/pacspage">PACS page</Link>
         <Link to="/mwls">Modality WorkList</Link>
         <Link to="/billing">Billing</Link>
         <Link to="/reporting">Reporting</Link>
